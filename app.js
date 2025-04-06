@@ -296,19 +296,28 @@ function initializeApp() {
             
             // First do a direct fetch for immediate results
             try {
-                logDebug('Performing initial direct data fetch with timestamp ordering');
+                logDebug('Performing initial direct data fetch...');
+                
+                // Verify Firestore collection for debugging
+                const userDocRef = db.collection('users').doc(user.uid);
+                const userDoc = await userDocRef.get();
+                
+                logDebug('User document exists:', { exists: userDoc.exists });
                 
                 // Fetch entries directly
-                const entriesSnapshot = await db.collection('users').doc(user.uid)
+                const entriesSnapshot = await userDocRef
                     .collection('drinkEntries')
-                    .orderBy('lastUpdated', 'desc')
                     .get();
                 
-                // Process the entries with timestamps
+                logDebug(`Initial fetch: Found ${entriesSnapshot.docs.length} raw entries`);
+                
+                // Process the entries
                 const entriesMap = new Map(); // Use a map to deduplicate
                 
                 entriesSnapshot.docs.forEach(doc => {
                     const data = doc.data();
+                    logDebug('Entry data:', { id: doc.id, date: data.date, drinks: data.drinks });
+                    
                     // Only add if this date isn't already in our map or if this update is newer
                     if (!entriesMap.has(data.date) || 
                         (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
@@ -326,10 +335,10 @@ function initializeApp() {
                 drinkEntries = Array.from(entriesMap.values())
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
                 
-                logDebug(`Initial fetch: Found ${drinkEntries.length} entries with timestamp ordering`);
+                logDebug(`Initial fetch: Processed ${drinkEntries.length} unique entries`);
                 
                 // Fetch achievements directly
-                const achievementsDoc = await db.collection('users').doc(user.uid)
+                const achievementsDoc = await userDocRef
                     .collection('userData')
                     .doc('achievements')
                     .get();
@@ -635,6 +644,9 @@ async function addDrinkEntry() {
                 amount: standardDrinks
             }];
             
+            // Log the entry we're updating for debugging
+            logDebug('Updating entry with ID', { id: existingEntry.id, path: `users/${currentUser.uid}/drinkEntries/${existingEntry.id}` });
+            
             // Update in Firestore with only simple properties
             await db.collection('users').doc(currentUser.uid)
                 .collection('drinkEntries').doc(existingEntry.id)
@@ -656,11 +668,29 @@ async function addDrinkEntry() {
                 lastUpdated: new Date()
             };
             
+            // Log what we're going to create
+            logDebug('Creating new entry', { path: `users/${currentUser.uid}/drinkEntries`, data: newEntry });
+            
             // Add to Firestore
             const docRef = await db.collection('users').doc(currentUser.uid)
                 .collection('drinkEntries').add(newEntry);
             
-            logDebug('Created new entry', { id: docRef.id, date });
+            logDebug('Created new entry with ID', { id: docRef.id, date });
+            
+            // Add the entry to local data immediately to ensure it's visible
+            drinkEntries.push({
+                id: docRef.id,
+                date,
+                drinks: newEntry.drinks,
+                lastUpdated: newEntry.lastUpdated
+            });
+            
+            // Sort entries by date
+            drinkEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
+            
+            // Update UI immediately
+            renderCalendar();
+            updateStats();
         }
         
         // Force a refresh of data immediately to ensure cross-browser consistency
