@@ -581,6 +581,9 @@ async function addDrinkEntry() {
     try {
         logDebug('Adding drink entry', { date, drinkType, standardDrinks });
         
+        // Generate a client-side timestamp for the drink item
+        const clientTimestamp = new Date().toISOString();
+        
         // Check if there's already an entry for this date
         const existingEntryIndex = drinkEntries.findIndex(entry => entry.date === date);
         
@@ -590,7 +593,7 @@ async function addDrinkEntry() {
             const updatedDrinks = [...existingEntry.drinks, {
                 type: drinkType,
                 amount: standardDrinks,
-                addedAt: firebase.firestore.FieldValue.serverTimestamp()
+                addedAt: clientTimestamp // Use client timestamp instead of server timestamp
             }];
             
             // Update in Firestore
@@ -598,7 +601,7 @@ async function addDrinkEntry() {
                 .collection('drinkEntries').doc(existingEntry.id)
                 .update({
                     drinks: updatedDrinks,
-                    lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
+                    lastUpdated: firebase.firestore.FieldValue.serverTimestamp() // Server timestamp is OK here
                 });
             
             logDebug('Updated existing entry', { id: existingEntry.id, totalDrinks: updatedDrinks.length });
@@ -609,10 +612,10 @@ async function addDrinkEntry() {
                 drinks: [{
                     type: drinkType,
                     amount: standardDrinks,
-                    addedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    addedAt: clientTimestamp // Use client timestamp instead of server timestamp
                 }],
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(), // Server timestamp is OK here
+                lastUpdated: firebase.firestore.FieldValue.serverTimestamp() // Server timestamp is OK here
             };
             
             // Add to Firestore
