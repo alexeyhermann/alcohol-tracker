@@ -156,60 +156,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 logDebug('Firebase Auth not loaded!');
             } else {
                 logDebug('Firebase Auth loaded successfully');
-                
-                // Check for redirect result
-                auth.getRedirectResult()
-                    .then((result) => {
-                        if (result.user) {
-                            logDebug('Google sign-in redirect successful', { 
-                                uid: result.user.uid,
-                                email: result.user.email,
-                                displayName: result.user.displayName
-                            });
-                            
-                            // Check if this is a new user
-                            const isNewUser = result.additionalUserInfo.isNewUser;
-                            if (isNewUser) {
-                                logDebug('New user from redirect - creating profile document');
-                                // Create initial user document in Firestore
-                                return db.collection('users').doc(result.user.uid).set({
-                                    displayName: result.user.displayName,
-                                    email: result.user.email,
-                                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                                });
-                            }
-                        }
-                    })
-                    .catch((error) => {
-                        logDebug('Google sign-in redirect result error', error);
-                        // Don't show error to user for redirect result, as they may just be visiting the page
-                    });
             }
         }
         
         initializeApp();
         
-        // Add Google login button if it exists
-        const googleLoginBtn = document.getElementById('google-login-btn');
-        if (googleLoginBtn) {
-            googleLoginBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                logDebug('Google login button clicked');
-                loginWithGoogle();
-            });
-        } else {
-            logDebug('Google login button not found!');
-        }
-        
-        // Add Google register button if it exists
-        const googleRegisterBtn = document.getElementById('google-register-btn');
-        if (googleRegisterBtn) {
-            googleRegisterBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                logDebug('Google register button clicked');
-                loginWithGoogle(); // Uses the same function as login
-            });
-        }
+        // Remove Google login button listeners
     } catch (error) {
         logDebug('Error during initialization', error);
     }
@@ -322,50 +274,6 @@ function login(email, password) {
             logDebug('Email login failed', error);
             showAlert(loginFormContainer, error.message, 'error');
         });
-}
-
-function loginWithGoogle() {
-    logDebug('Attempting Google sign-in');
-    try {
-        if (!firebase.auth) {
-            logDebug('Firebase Auth not available');
-            showAlert(loginFormContainer, 'Firebase Auth not available', 'error');
-            return;
-        }
-        
-        if (!firebase.auth.GoogleAuthProvider) {
-            logDebug('Google Auth Provider not available');
-            showAlert(loginFormContainer, 'Google Auth Provider not available', 'error');
-            return;
-        }
-        
-        const provider = new firebase.auth.GoogleAuthProvider();
-        // Add scopes if needed
-        provider.addScope('profile');
-        provider.addScope('email');
-        
-        logDebug('Google Auth Provider created with scopes');
-        
-        // Set custom parameters
-        provider.setCustomParameters({
-            'prompt': 'select_account'
-        });
-        
-        // Close the modal before redirect
-        authModal.style.display = 'none';
-        
-        // Use redirect instead of popup
-        logDebug('Initiating Google sign-in redirect');
-        firebase.auth().signInWithRedirect(provider)
-            .catch(error => {
-                logDebug('Google sign-in redirect failed', error);
-                authModal.style.display = 'block';
-                showAlert(loginFormContainer, error.message, 'error');
-            });
-    } catch (error) {
-        logDebug('Error in Google sign-in', error);
-        showAlert(loginFormContainer, 'Error initializing Google sign-in: ' + error.message, 'error');
-    }
 }
 
 function register(email, password, displayName) {

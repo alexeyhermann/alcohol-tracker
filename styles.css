@@ -93,48 +93,6 @@ header h1 {
     text-decoration: underline;
 }
 
-/* Google Auth Button Styles */
-.divider {
-    display: flex;
-    align-items: center;
-    text-align: center;
-    margin: 20px 0;
-    color: #888;
-}
-
-.divider::before,
-.divider::after {
-    content: '';
-    flex: 1;
-    border-bottom: 1px solid #ddd;
-}
-
-.divider span {
-    padding: 0 10px;
-    font-size: 14px;
-}
-
-.google-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    width: 100%;
-    background-color: white;
-    color: #444;
-    border: 1px solid #ddd;
-}
-
-.google-btn:hover {
-    background-color: #f5f5f5;
-    transform: translateY(-2px);
-}
-
-.google-icon {
-    width: 18px;
-    height: 18px;
-}
-
 /* Modal Styles */
 .modal {
     display: none;
