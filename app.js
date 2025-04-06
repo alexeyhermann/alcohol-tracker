@@ -426,7 +426,7 @@ function register(email, password, displayName) {
             return db.collection('users').doc(auth.currentUser.uid).set({
                 displayName: displayName,
                 email: email,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: new Date() // Use regular Date object instead of server timestamp
             });
         })
         .then(() => {
