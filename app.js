@@ -1,8 +1,41 @@
-// Initialize data structures
-let drinkEntries = JSON.parse(localStorage.getItem('drinkEntries')) || [];
-let achievements = JSON.parse(localStorage.getItem('achievements')) || [];
+// DOM elements
+// Auth elements
+const loginBtn = document.getElementById('login-btn');
+const registerBtn = document.getElementById('register-btn');
+const logoutBtn = document.getElementById('logout-btn');
+const currentProfile = document.getElementById('current-profile');
+const authModal = document.getElementById('auth-modal');
+const closeBtn = document.querySelector('.close');
+const loginFormContainer = document.getElementById('login-form-container');
+const registerFormContainer = document.getElementById('register-form-container');
+const switchToRegisterBtn = document.getElementById('switch-to-register');
+const switchToLoginBtn = document.getElementById('switch-to-login');
+const loginForm = document.getElementById('login-form');
+const registerForm = document.getElementById('register-form');
+const appContent = document.getElementById('app-content');
+const loginMessage = document.getElementById('login-message');
 
-// Define achievement list
+// App elements
+const alcoholForm = document.getElementById('alcohol-form');
+const dateInput = document.getElementById('date');
+const drinkTypeSelect = document.getElementById('drink-type');
+const standardDrinksInput = document.getElementById('standard-drinks');
+const calendarEl = document.getElementById('calendar');
+const weeklyTotalEl = document.getElementById('weekly-total');
+const monthlyAverageEl = document.getElementById('monthly-average');
+const soberDaysEl = document.getElementById('sober-days');
+const achievementsContainer = document.getElementById('achievements-container');
+const shareBtn = document.getElementById('share-btn');
+const shareLinkContainer = document.getElementById('share-link-container');
+const shareLinkEl = document.getElementById('share-link');
+const copyBtn = document.getElementById('copy-btn');
+
+// Global state
+let currentUser = null;
+let drinkEntries = [];
+let achievements = [];
+
+// Achievement definitions
 const achievementDefinitions = [
     {
         id: 'first_entry',
@@ -65,24 +98,9 @@ const achievementDefinitions = [
         title: 'Sharing is Caring',
         description: 'Share your progress with a friend',
         icon: '🔗',
-        condition: () => localStorage.getItem('hasShared') === 'true'
+        condition: () => sessionStorage.getItem('hasShared') === 'true'
     }
 ];
-
-// DOM elements
-const alcoholForm = document.getElementById('alcohol-form');
-const dateInput = document.getElementById('date');
-const drinkTypeSelect = document.getElementById('drink-type');
-const standardDrinksInput = document.getElementById('standard-drinks');
-const calendarEl = document.getElementById('calendar');
-const weeklyTotalEl = document.getElementById('weekly-total');
-const monthlyAverageEl = document.getElementById('monthly-average');
-const soberDaysEl = document.getElementById('sober-days');
-const achievementsContainer = document.getElementById('achievements-container');
-const shareBtn = document.getElementById('share-btn');
-const shareLinkContainer = document.getElementById('share-link-container');
-const shareLinkEl = document.getElementById('share-link');
-const copyBtn = document.getElementById('copy-btn');
 
 // Initialize date picker
 flatpickr(dateInput, {
@@ -94,8 +112,75 @@ flatpickr(dateInput, {
 // Event listeners
 document.addEventListener('DOMContentLoaded', function() {
     initializeApp();
+    
+    // Add Google login button if it exists
+    const googleLoginBtn = document.getElementById('google-login-btn');
+    if (googleLoginBtn) {
+        googleLoginBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            loginWithGoogle();
+        });
+    }
+    
+    // Add Google register button if it exists
+    const googleRegisterBtn = document.getElementById('google-register-btn');
+    if (googleRegisterBtn) {
+        googleRegisterBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            loginWithGoogle(); // Uses the same function as login
+        });
+    }
 });
 
+// Auth event listeners
+loginBtn.addEventListener('click', function() {
+    showAuthModal('login');
+});
+
+registerBtn.addEventListener('click', function() {
+    showAuthModal('register');
+});
+
+logoutBtn.addEventListener('click', function() {
+    logout();
+});
+
+closeBtn.addEventListener('click', function() {
+    authModal.style.display = 'none';
+});
+
+window.addEventListener('click', function(e) {
+    if (e.target === authModal) {
+        authModal.style.display = 'none';
+    }
+});
+
+switchToRegisterBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    showAuthForm('register');
+});
+
+switchToLoginBtn.addEventListener('click', function(e) {
+    e.preventDefault();
+    showAuthForm('login');
+});
+
+loginForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    login(email, password);
+});
+
+registerForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const email = document.getElementById('register-email').value;
+    const password = document.getElementById('register-password').value;
+    const displayName = document.getElementById('register-name').value;
+    register(email, password, displayName);
+});
+
+// App event listeners
 alcoholForm.addEventListener('submit', function(e) {
     e.preventDefault();
     addDrinkEntry();
@@ -109,53 +194,289 @@ copyBtn.addEventListener('click', function() {
     copyShareLink();
 });
 
-// Functions
+// Authentication functions
 function initializeApp() {
-    renderCalendar();
-    updateStats();
-    renderAchievements();
-    checkForSharedData();
+    // Check if user is logged in
+    auth.onAuthStateChanged(async function(user) {
+        if (user) {
+            currentUser = user;
+            await loadUserData();
+            updateUI();
+        } else {
+            currentUser = null;
+            showLoginScreen();
+        }
+    });
 }
 
-function addDrinkEntry() {
+function showAuthModal(type) {
+    authModal.style.display = 'block';
+    showAuthForm(type);
+}
+
+function showAuthForm(type) {
+    if (type === 'login') {
+        loginFormContainer.style.display = 'block';
+        registerFormContainer.style.display = 'none';
+    } else {
+        loginFormContainer.style.display = 'none';
+        registerFormContainer.style.display = 'block';
+    }
+}
+
+function login(email, password) {
+    auth.signInWithEmailAndPassword(email, password)
+        .then(() => {
+            authModal.style.display = 'none';
+            loginForm.reset();
+        })
+        .catch(error => {
+            showAlert(loginFormContainer, error.message, 'error');
+        });
+}
+
+function loginWithGoogle() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider)
+        .then((result) => {
+            // Check if this is a new user
+            const isNewUser = result.additionalUserInfo.isNewUser;
+            if (isNewUser) {
+                // Create initial user document in Firestore
+                return db.collection('users').doc(result.user.uid).set({
+                    displayName: result.user.displayName,
+                    email: result.user.email,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            }
+        })
+        .then(() => {
+            authModal.style.display = 'none';
+        })
+        .catch(error => {
+            showAlert(loginFormContainer, error.message, 'error');
+        });
+}
+
+function register(email, password, displayName) {
+    auth.createUserWithEmailAndPassword(email, password)
+        .then(userCredential => {
+            // Set display name
+            return userCredential.user.updateProfile({
+                displayName: displayName
+            });
+        })
+        .then(() => {
+            // Create initial user document in Firestore
+            return db.collection('users').doc(auth.currentUser.uid).set({
+                displayName: displayName,
+                email: email,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        })
+        .then(() => {
+            authModal.style.display = 'none';
+            registerForm.reset();
+        })
+        .catch(error => {
+            showAlert(registerFormContainer, error.message, 'error');
+        });
+}
+
+function logout() {
+    auth.signOut()
+        .then(() => {
+            showLoginScreen();
+        })
+        .catch(error => {
+            console.error('Logout error:', error);
+        });
+}
+
+function showAlert(container, message, type) {
+    // Remove any existing alert
+    const existingAlert = container.querySelector('.alert');
+    if (existingAlert) {
+        existingAlert.remove();
+    }
+    
+    // Create alert element
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type}`;
+    alert.textContent = message;
+    
+    // Insert at the top of the container
+    container.insertBefore(alert, container.firstChild);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (alert.parentNode) {
+            alert.remove();
+        }
+    }, 5000);
+}
+
+// Data functions
+async function loadUserData() {
+    try {
+        // Load user drink entries
+        const entriesSnapshot = await db.collection('users').doc(currentUser.uid)
+            .collection('drinkEntries').orderBy('date').get();
+        
+        drinkEntries = entriesSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                date: data.date,
+                drinks: data.drinks
+            };
+        });
+        
+        // Load user achievements
+        const achievementsDoc = await db.collection('users').doc(currentUser.uid)
+            .collection('userData').doc('achievements').get();
+        
+        if (achievementsDoc.exists) {
+            achievements = achievementsDoc.data().list || [];
+        } else {
+            achievements = [];
+        }
+    } catch (error) {
+        console.error('Error loading user data:', error);
+    }
+}
+
+async function addDrinkEntry() {
+    if (!currentUser) return;
+    
     const date = dateInput.value;
     const drinkType = drinkTypeSelect.value;
     const standardDrinks = parseFloat(standardDrinksInput.value);
     
-    // Check if there's already an entry for this date
-    const existingEntryIndex = drinkEntries.findIndex(entry => entry.date === date);
-    
-    if (existingEntryIndex !== -1) {
-        // Update existing entry
-        drinkEntries[existingEntryIndex].drinks.push({
-            type: drinkType,
-            amount: standardDrinks
-        });
-    } else {
-        // Create new entry
-        drinkEntries.push({
-            date,
-            drinks: [{
+    try {
+        // Check if there's already an entry for this date
+        const existingEntryIndex = drinkEntries.findIndex(entry => entry.date === date);
+        
+        if (existingEntryIndex !== -1) {
+            // Update existing entry
+            const existingEntry = drinkEntries[existingEntryIndex];
+            const updatedDrinks = [...existingEntry.drinks, {
                 type: drinkType,
                 amount: standardDrinks
-            }]
-        });
+            }];
+            
+            // Update in Firestore
+            await db.collection('users').doc(currentUser.uid)
+                .collection('drinkEntries').doc(existingEntry.id)
+                .update({
+                    drinks: updatedDrinks
+                });
+            
+            // Update local state
+            drinkEntries[existingEntryIndex].drinks = updatedDrinks;
+        } else {
+            // Create new entry
+            const newEntry = {
+                date,
+                drinks: [{
+                    type: drinkType,
+                    amount: standardDrinks
+                }]
+            };
+            
+            // Add to Firestore
+            const docRef = await db.collection('users').doc(currentUser.uid)
+                .collection('drinkEntries').add(newEntry);
+            
+            // Update local state
+            drinkEntries.push({
+                id: docRef.id,
+                ...newEntry
+            });
+            
+            // Sort entries by date
+            drinkEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
+        }
+        
+        // Update UI
+        renderCalendar();
+        updateStats();
+        checkAchievements();
+        
+        // Reset form
+        alcoholForm.reset();
+        dateInput._flatpickr.setDate('today');
+    } catch (error) {
+        console.error('Error adding drink entry:', error);
+        alert('Error adding drink entry: ' + error.message);
+    }
+}
+
+async function checkAchievements() {
+    if (!currentUser) return;
+    
+    let newAchievements = false;
+    
+    for (const def of achievementDefinitions) {
+        if (!achievements.includes(def.id) && def.condition(drinkEntries)) {
+            achievements.push(def.id);
+            newAchievements = true;
+        }
     }
     
-    // Sort entries by date
-    drinkEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
+    if (newAchievements) {
+        try {
+            // Save achievements to Firestore
+            await db.collection('users').doc(currentUser.uid)
+                .collection('userData').doc('achievements')
+                .set({
+                    list: achievements,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            
+            renderAchievements();
+        } catch (error) {
+            console.error('Error saving achievements:', error);
+        }
+    }
+}
+
+// UI functions
+function updateUI() {
+    // Show user's display name
+    currentProfile.textContent = currentUser.displayName || currentUser.email;
     
-    // Save to localStorage
-    localStorage.setItem('drinkEntries', JSON.stringify(drinkEntries));
+    // Show logout button instead of login/register
+    loginBtn.style.display = 'none';
+    registerBtn.style.display = 'none';
+    logoutBtn.style.display = 'inline-block';
     
-    // Update UI
+    // Show app content
+    appContent.style.display = 'block';
+    loginMessage.style.display = 'none';
+    
+    // Render data
     renderCalendar();
     updateStats();
-    checkAchievements();
+    renderAchievements();
+}
+
+function showLoginScreen() {
+    // Hide app content
+    appContent.style.display = 'none';
+    loginMessage.style.display = 'block';
     
-    // Reset form
-    alcoholForm.reset();
-    dateInput._flatpickr.setDate('today');
+    // Show login/register buttons
+    loginBtn.style.display = 'inline-block';
+    registerBtn.style.display = 'inline-block';
+    logoutBtn.style.display = 'none';
+    
+    // Update profile display
+    currentProfile.textContent = 'Not logged in';
+    
+    // Clear data
+    drinkEntries = [];
+    achievements = [];
 }
 
 function renderCalendar() {
@@ -281,6 +602,79 @@ function calculateSoberDays() {
     return soberDays;
 }
 
+function renderAchievements() {
+    // Clear container
+    achievementsContainer.innerHTML = '';
+    
+    // Render each achievement
+    achievementDefinitions.forEach(def => {
+        const isUnlocked = achievements.includes(def.id);
+        
+        const achievementEl = document.createElement('div');
+        achievementEl.className = `achievement ${isUnlocked ? 'unlocked' : 'locked'}`;
+        
+        const iconEl = document.createElement('div');
+        iconEl.className = 'achievement-icon';
+        iconEl.textContent = def.icon;
+        
+        const titleEl = document.createElement('div');
+        titleEl.className = 'achievement-title';
+        titleEl.textContent = def.title;
+        
+        const descEl = document.createElement('div');
+        descEl.className = 'achievement-description';
+        descEl.textContent = def.description;
+        
+        achievementEl.appendChild(iconEl);
+        achievementEl.appendChild(titleEl);
+        achievementEl.appendChild(descEl);
+        
+        achievementsContainer.appendChild(achievementEl);
+    });
+}
+
+function generateShareLink() {
+    if (!currentUser) return;
+    
+    // Create shareable data
+    const shareData = {
+        achievements,
+        stats: {
+            weeklyTotal: weeklyTotalEl.textContent,
+            monthlyAverage: monthlyAverageEl.textContent,
+            soberDays: soberDaysEl.textContent
+        },
+        userName: currentUser.displayName || 'Anonymous'
+    };
+    
+    // Encode data
+    const encodedData = btoa(JSON.stringify(shareData));
+    
+    // Create link
+    const shareLink = `${window.location.href.split('?')[0]}?share=${encodedData}`;
+    
+    // Update UI
+    shareLinkEl.value = shareLink;
+    shareLinkContainer.style.display = 'flex';
+    
+    // Mark as shared
+    sessionStorage.setItem('hasShared', 'true');
+    
+    // Check achievements
+    checkAchievements();
+}
+
+function copyShareLink() {
+    shareLinkEl.select();
+    document.execCommand('copy');
+    
+    copyBtn.textContent = 'Copied!';
+    setTimeout(() => {
+        copyBtn.textContent = 'Copy';
+    }, 2000);
+}
+
+// Utility functions for achievements
 function hasSoberStreak(entries, days) {
     // Get all dates from past 60 days
     const allDates = [];
@@ -396,92 +790,8 @@ function hasReducedConsumption(entries, ratio) {
     return secondPeriodTotal <= firstPeriodTotal * (1 - ratio);
 }
 
-function checkAchievements() {
-    let newAchievements = false;
-    
-    achievementDefinitions.forEach(def => {
-        if (!achievements.includes(def.id) && def.condition(drinkEntries)) {
-            achievements.push(def.id);
-            newAchievements = true;
-        }
-    });
-    
-    if (newAchievements) {
-        localStorage.setItem('achievements', JSON.stringify(achievements));
-        renderAchievements();
-    }
-}
-
-function renderAchievements() {
-    // Clear container
-    achievementsContainer.innerHTML = '';
-    
-    // Render each achievement
-    achievementDefinitions.forEach(def => {
-        const isUnlocked = achievements.includes(def.id);
-        
-        const achievementEl = document.createElement('div');
-        achievementEl.className = `achievement ${isUnlocked ? 'unlocked' : 'locked'}`;
-        
-        const iconEl = document.createElement('div');
-        iconEl.className = 'achievement-icon';
-        iconEl.textContent = def.icon;
-        
-        const titleEl = document.createElement('div');
-        titleEl.className = 'achievement-title';
-        titleEl.textContent = def.title;
-        
-        const descEl = document.createElement('div');
-        descEl.className = 'achievement-description';
-        descEl.textContent = def.description;
-        
-        achievementEl.appendChild(iconEl);
-        achievementEl.appendChild(titleEl);
-        achievementEl.appendChild(descEl);
-        
-        achievementsContainer.appendChild(achievementEl);
-    });
-}
-
-function generateShareLink() {
-    // Create shareable data
-    const shareData = {
-        achievements,
-        stats: {
-            weeklyTotal: weeklyTotalEl.textContent,
-            monthlyAverage: monthlyAverageEl.textContent,
-            soberDays: soberDaysEl.textContent
-        }
-    };
-    
-    // Encode data
-    const encodedData = btoa(JSON.stringify(shareData));
-    
-    // Create link
-    const shareLink = `${window.location.href.split('?')[0]}?share=${encodedData}`;
-    
-    // Update UI
-    shareLinkEl.value = shareLink;
-    shareLinkContainer.style.display = 'flex';
-    
-    // Mark as shared
-    localStorage.setItem('hasShared', 'true');
-    
-    // Check achievements
-    checkAchievements();
-}
-
-function copyShareLink() {
-    shareLinkEl.select();
-    document.execCommand('copy');
-    
-    copyBtn.textContent = 'Copied!';
-    setTimeout(() => {
-        copyBtn.textContent = 'Copy';
-    }, 2000);
-}
-
-function checkForSharedData() {
+// Check for shared data in URL
+window.addEventListener('DOMContentLoaded', function() {
     // Check URL for shared data
     const urlParams = new URLSearchParams(window.location.search);
     const sharedData = urlParams.get('share');
@@ -490,22 +800,65 @@ function checkForSharedData() {
         try {
             const decodedData = JSON.parse(atob(sharedData));
             
-            // Show shared achievements and stats
-            alert('Viewing shared progress! This is view-only mode.');
+            // Show shared data in a nice way
+            const userName = decodedData.userName || 'Someone';
             
-            // Could implement showing the shared data here
-            console.log('Shared data:', decodedData);
+            // Create share view
+            loginMessage.innerHTML = `
+                <h2>${userName}'s Alcohol Tracker Progress</h2>
+                <div class="shared-stats">
+                    <div class="stat-card">
+                        <h3>Weekly Total</h3>
+                        <p>${decodedData.stats.weeklyTotal}</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Monthly Average</h3>
+                        <p>${decodedData.stats.monthlyAverage}</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Sober Days</h3>
+                        <p>${decodedData.stats.soberDays}</p>
+                    </div>
+                </div>
+                <h3>Achievements (${decodedData.achievements.length} unlocked)</h3>
+                <div class="shared-achievements">
+                    ${achievementDefinitions
+                        .filter(def => decodedData.achievements.includes(def.id))
+                        .map(def => `
+                            <div class="achievement unlocked">
+                                <div class="achievement-icon">${def.icon}</div>
+                                <div class="achievement-title">${def.title}</div>
+                                <div class="achievement-description">${def.description}</div>
+                            </div>
+                        `).join('')}
+                </div>
+                <p class="create-own">Create your own tracker by logging in or registering!</p>
+            `;
             
-            // For now, just show a simple alert with stats
-            alert(
-                `Shared Stats:\n` +
-                `Weekly Total: ${decodedData.stats.weeklyTotal}\n` +
-                `Monthly Average: ${decodedData.stats.monthlyAverage}\n` +
-                `Sober Days: ${decodedData.stats.soberDays}\n` +
-                `Achievements: ${decodedData.achievements.length} unlocked`
-            );
+            // Add shared view styles
+            const style = document.createElement('style');
+            style.textContent = `
+                .shared-stats {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                    gap: 20px;
+                    margin: 20px 0;
+                }
+                .shared-achievements {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                    gap: 20px;
+                    margin: 20px 0;
+                }
+                .create-own {
+                    margin-top: 30px;
+                    font-weight: bold;
+                    color: var(--primary-color);
+                }
+            `;
+            document.head.appendChild(style);
         } catch (e) {
             console.error('Error parsing shared data:', e);
         }
     }
-} 
+}); 
