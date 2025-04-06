@@ -31,6 +31,7 @@ const shareBtn = document.getElementById('share-btn');
 const shareLinkContainer = document.getElementById('share-link-container');
 const shareLinkEl = document.getElementById('share-link');
 const copyBtn = document.getElementById('copy-btn');
+const refreshDataBtn = document.getElementById('refresh-data-btn');
 
 // Show debug info in development
 const isDebugMode = true;
@@ -229,6 +230,10 @@ copyBtn.addEventListener('click', function() {
     copyShareLink();
 });
 
+refreshDataBtn.addEventListener('click', function() {
+    refreshUserData();
+});
+
 // Authentication functions
 function initializeApp() {
     // Check if user is logged in
@@ -356,61 +361,109 @@ function showAlert(container, message, type) {
 
 // Data functions
 async function loadUserData() {
-    if (!currentUser) return;
+    if (!currentUser) {
+        logDebug('No current user, cannot load data');
+        return;
+    }
     
     try {
-        logDebug('Setting up real-time listeners for user data');
+        logDebug('Setting up real-time listeners for user data', { uid: currentUser.uid });
         
         // Unsubscribe from previous listeners if they exist
         if (window.entriesUnsubscribe) {
+            logDebug('Unsubscribing from previous entries listener');
             window.entriesUnsubscribe();
+            window.entriesUnsubscribe = null;
         }
         
         if (window.achievementsUnsubscribe) {
+            logDebug('Unsubscribing from previous achievements listener');
             window.achievementsUnsubscribe();
+            window.achievementsUnsubscribe = null;
         }
         
-        // Set up real-time listener for user drink entries
-        window.entriesUnsubscribe = db.collection('users').doc(currentUser.uid)
-            .collection('drinkEntries')
-            .orderBy('date')
-            .onSnapshot(snapshot => {
-                logDebug(`Received ${snapshot.docs.length} entries from Firestore (real-time)`);
+        // Set up real-time listener for user drink entries with stronger error handling
+        try {
+            const entriesRef = db.collection('users').doc(currentUser.uid)
+                .collection('drinkEntries')
+                .orderBy('date');
                 
-                drinkEntries = snapshot.docs.map(doc => {
-                    const data = doc.data();
-                    return {
-                        id: doc.id,
-                        date: data.date,
-                        drinks: data.drinks
-                    };
-                });
-                
-                // Update UI with new data
-                renderCalendar();
-                updateStats();
-                checkAchievements();
-            }, error => {
-                logDebug('Error in entries listener', error);
-                console.error('Error in entries listener:', error);
-            });
-        
-        // Set up real-time listener for user achievements
-        window.achievementsUnsubscribe = db.collection('users').doc(currentUser.uid)
-            .collection('userData')
-            .doc('achievements')
-            .onSnapshot(doc => {
-                if (doc.exists) {
-                    achievements = doc.data().list || [];
-                } else {
-                    achievements = [];
+            logDebug('Creating entries listener', { path: `users/${currentUser.uid}/drinkEntries` });
+            
+            window.entriesUnsubscribe = entriesRef.onSnapshot(
+                snapshot => {
+                    logDebug(`Received ${snapshot.docs.length} entries from Firestore (real-time)`);
+                    
+                    drinkEntries = snapshot.docs.map(doc => {
+                        const data = doc.data();
+                        return {
+                            id: doc.id,
+                            date: data.date,
+                            drinks: data.drinks || [] // Ensure drinks array exists
+                        };
+                    });
+                    
+                    // Log the entries for debugging
+                    logDebug('Entries received', { 
+                        count: drinkEntries.length, 
+                        sample: drinkEntries.length > 0 ? drinkEntries[0] : null 
+                    });
+                    
+                    // Update UI with new data
+                    renderCalendar();
+                    updateStats();
+                    checkAchievements();
+                }, 
+                error => {
+                    logDebug('Error in entries listener', error);
+                    console.error('Error in entries listener:', error);
+                    
+                    // Try to re-establish connection after a delay
+                    setTimeout(() => {
+                        logDebug('Attempting to reconnect entries listener');
+                        if (window.entriesUnsubscribe) {
+                            window.entriesUnsubscribe();
+                            window.entriesUnsubscribe = null;
+                        }
+                        loadUserData();
+                    }, 5000);
                 }
+            );
+            
+            logDebug('Entries listener established successfully');
+        } catch (entriesError) {
+            logDebug('Failed to set up entries listener', entriesError);
+        }
+        
+        // Set up real-time listener for user achievements with stronger error handling
+        try {
+            const achievementsRef = db.collection('users').doc(currentUser.uid)
+                .collection('userData')
+                .doc('achievements');
                 
-                renderAchievements();
-            }, error => {
-                logDebug('Error in achievements listener', error);
-                console.error('Error in achievements listener:', error);
-            });
+            logDebug('Creating achievements listener', { path: `users/${currentUser.uid}/userData/achievements` });
+            
+            window.achievementsUnsubscribe = achievementsRef.onSnapshot(
+                doc => {
+                    logDebug('Achievements document updated', { exists: doc.exists });
+                    if (doc.exists) {
+                        achievements = doc.data().list || [];
+                    } else {
+                        achievements = [];
+                    }
+                    
+                    renderAchievements();
+                }, 
+                error => {
+                    logDebug('Error in achievements listener', error);
+                    console.error('Error in achievements listener:', error);
+                }
+            );
+            
+            logDebug('Achievements listener established successfully');
+        } catch (achievementsError) {
+            logDebug('Failed to set up achievements listener', achievementsError);
+        }
     } catch (error) {
         logDebug('Error setting up real-time listeners', error);
         console.error('Error setting up real-time listeners:', error);
@@ -931,4 +984,53 @@ window.addEventListener('DOMContentLoaded', function() {
             console.error('Error parsing shared data:', e);
         }
     }
-}); 
+});
+
+// Manual refresh function
+function refreshUserData() {
+    if (!currentUser) {
+        logDebug('Cannot refresh: No user logged in');
+        return;
+    }
+    
+    logDebug('Manual refresh requested');
+    
+    // Show loading state
+    refreshDataBtn.textContent = 'Loading...';
+    refreshDataBtn.disabled = true;
+    
+    // Force unsubscribe and resubscribe
+    if (window.entriesUnsubscribe) {
+        window.entriesUnsubscribe();
+        window.entriesUnsubscribe = null;
+    }
+    
+    if (window.achievementsUnsubscribe) {
+        window.achievementsUnsubscribe();
+        window.achievementsUnsubscribe = null;
+    }
+    
+    // Clear cache
+    drinkEntries = [];
+    
+    // Re-load data
+    loadUserData()
+        .then(() => {
+            logDebug('Manual refresh completed');
+            // Reset button
+            refreshDataBtn.textContent = 'Refresh Data';
+            refreshDataBtn.disabled = false;
+            
+            // Show success message
+            showAlert(document.querySelector('.stats-section'), 'Data refreshed successfully!', 'success');
+        })
+        .catch(error => {
+            logDebug('Manual refresh failed', error);
+            // Reset button
+            refreshDataBtn.textContent = 'Refresh Data';
+            refreshDataBtn.disabled = false;
+            
+            // Show error message
+            showAlert(document.querySelector('.stats-section'), 'Failed to refresh data. Try again.', 'error');
+        });
+} 
