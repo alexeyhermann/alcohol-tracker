@@ -308,6 +308,18 @@ function register(email, password, displayName) {
 
 function logout() {
     logDebug('Logging out');
+    
+    // Unsubscribe from Firestore listeners
+    if (window.entriesUnsubscribe) {
+        window.entriesUnsubscribe();
+        window.entriesUnsubscribe = null;
+    }
+    
+    if (window.achievementsUnsubscribe) {
+        window.achievementsUnsubscribe();
+        window.achievementsUnsubscribe = null;
+    }
+    
     auth.signOut()
         .then(() => {
             logDebug('Logout successful');
@@ -344,31 +356,64 @@ function showAlert(container, message, type) {
 
 // Data functions
 async function loadUserData() {
+    if (!currentUser) return;
+    
     try {
-        // Load user drink entries
-        const entriesSnapshot = await db.collection('users').doc(currentUser.uid)
-            .collection('drinkEntries').orderBy('date').get();
+        logDebug('Setting up real-time listeners for user data');
         
-        drinkEntries = entriesSnapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                id: doc.id,
-                date: data.date,
-                drinks: data.drinks
-            };
-        });
-        
-        // Load user achievements
-        const achievementsDoc = await db.collection('users').doc(currentUser.uid)
-            .collection('userData').doc('achievements').get();
-        
-        if (achievementsDoc.exists) {
-            achievements = achievementsDoc.data().list || [];
-        } else {
-            achievements = [];
+        // Unsubscribe from previous listeners if they exist
+        if (window.entriesUnsubscribe) {
+            window.entriesUnsubscribe();
         }
+        
+        if (window.achievementsUnsubscribe) {
+            window.achievementsUnsubscribe();
+        }
+        
+        // Set up real-time listener for user drink entries
+        window.entriesUnsubscribe = db.collection('users').doc(currentUser.uid)
+            .collection('drinkEntries')
+            .orderBy('date')
+            .onSnapshot(snapshot => {
+                logDebug(`Received ${snapshot.docs.length} entries from Firestore (real-time)`);
+                
+                drinkEntries = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        id: doc.id,
+                        date: data.date,
+                        drinks: data.drinks
+                    };
+                });
+                
+                // Update UI with new data
+                renderCalendar();
+                updateStats();
+                checkAchievements();
+            }, error => {
+                logDebug('Error in entries listener', error);
+                console.error('Error in entries listener:', error);
+            });
+        
+        // Set up real-time listener for user achievements
+        window.achievementsUnsubscribe = db.collection('users').doc(currentUser.uid)
+            .collection('userData')
+            .doc('achievements')
+            .onSnapshot(doc => {
+                if (doc.exists) {
+                    achievements = doc.data().list || [];
+                } else {
+                    achievements = [];
+                }
+                
+                renderAchievements();
+            }, error => {
+                logDebug('Error in achievements listener', error);
+                console.error('Error in achievements listener:', error);
+            });
     } catch (error) {
-        console.error('Error loading user data:', error);
+        logDebug('Error setting up real-time listeners', error);
+        console.error('Error setting up real-time listeners:', error);
     }
 }
 
@@ -380,6 +425,8 @@ async function addDrinkEntry() {
     const standardDrinks = parseFloat(standardDrinksInput.value);
     
     try {
+        logDebug('Adding drink entry', { date, drinkType, standardDrinks });
+        
         // Check if there's already an entry for this date
         const existingEntryIndex = drinkEntries.findIndex(entry => entry.date === date);
         
@@ -398,8 +445,7 @@ async function addDrinkEntry() {
                     drinks: updatedDrinks
                 });
             
-            // Update local state
-            drinkEntries[existingEntryIndex].drinks = updatedDrinks;
+            logDebug('Updated existing entry', { id: existingEntry.id, totalDrinks: updatedDrinks.length });
         } else {
             // Create new entry
             const newEntry = {
@@ -414,25 +460,16 @@ async function addDrinkEntry() {
             const docRef = await db.collection('users').doc(currentUser.uid)
                 .collection('drinkEntries').add(newEntry);
             
-            // Update local state
-            drinkEntries.push({
-                id: docRef.id,
-                ...newEntry
-            });
-            
-            // Sort entries by date
-            drinkEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
+            logDebug('Created new entry', { id: docRef.id, date });
         }
-        
-        // Update UI
-        renderCalendar();
-        updateStats();
-        checkAchievements();
         
         // Reset form
         alcoholForm.reset();
         dateInput._flatpickr.setDate('today');
+        
+        // UI will be updated by the onSnapshot listeners
     } catch (error) {
+        logDebug('Error adding drink entry', error);
         console.error('Error adding drink entry:', error);
         alert('Error adding drink entry: ' + error.message);
     }
@@ -469,40 +506,47 @@ async function checkAchievements() {
 
 // UI functions
 function updateUI() {
-    // Show user's display name
-    currentProfile.textContent = currentUser.displayName || currentUser.email;
-    
-    // Show logout button instead of login/register
-    loginBtn.style.display = 'none';
-    registerBtn.style.display = 'none';
-    logoutBtn.style.display = 'inline-block';
-    
-    // Show app content
+    logDebug('Updating UI for logged in user');
+    // Show main app content
     appContent.style.display = 'block';
     loginMessage.style.display = 'none';
     
-    // Render data
+    // Update profile display
+    currentProfile.textContent = currentUser.displayName || currentUser.email;
+    
+    // Show logout button, hide login/register buttons
+    logoutBtn.style.display = 'inline-block';
+    loginBtn.style.display = 'none';
+    registerBtn.style.display = 'none';
+    
+    // Update UI elements
     renderCalendar();
-    updateStats();
     renderAchievements();
+    updateStats();
+    
+    // Make sure debug container is visible if debug is enabled
+    if (isDebugMode && authDebugContainer) {
+        authDebugContainer.style.display = 'block';
+    }
 }
 
 function showLoginScreen() {
-    // Hide app content
+    // Hide main app content
     appContent.style.display = 'none';
     loginMessage.style.display = 'block';
     
-    // Show login/register buttons
+    // Show login/register buttons, hide logout button
+    logoutBtn.style.display = 'none';
     loginBtn.style.display = 'inline-block';
     registerBtn.style.display = 'inline-block';
-    logoutBtn.style.display = 'none';
     
-    // Update profile display
+    // Reset current profile
     currentProfile.textContent = 'Not logged in';
     
-    // Clear data
-    drinkEntries = [];
-    achievements = [];
+    // Make sure debug container is visible if debug is enabled
+    if (isDebugMode && authDebugContainer) {
+        authDebugContainer.style.display = 'block';
+    }
 }
 
 function renderCalendar() {
