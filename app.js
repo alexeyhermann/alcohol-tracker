@@ -14,6 +14,8 @@ const loginForm = document.getElementById('login-form');
 const registerForm = document.getElementById('register-form');
 const appContent = document.getElementById('app-content');
 const loginMessage = document.getElementById('login-message');
+const authDebugInfo = document.getElementById('auth-debug-info');
+const authDebugContainer = document.querySelector('.auth-debug');
 
 // App elements
 const alcoholForm = document.getElementById('alcohol-form');
@@ -29,6 +31,12 @@ const shareBtn = document.getElementById('share-btn');
 const shareLinkContainer = document.getElementById('share-link-container');
 const shareLinkEl = document.getElementById('share-link');
 const copyBtn = document.getElementById('copy-btn');
+
+// Show debug info in development
+const isDebugMode = true;
+if (isDebugMode && authDebugContainer) {
+    authDebugContainer.style.display = 'block';
+}
 
 // Global state
 let currentUser = null;
@@ -109,26 +117,73 @@ flatpickr(dateInput, {
     dateFormat: 'Y-m-d'
 });
 
+// Debug logger
+function logDebug(message, data = null) {
+    if (isDebugMode && authDebugInfo) {
+        const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+        let logMessage = `[${timestamp}] ${message}`;
+        
+        if (data) {
+            try {
+                // If data is an error object, get its message and stack
+                if (data instanceof Error) {
+                    logMessage += `\nError: ${data.message}\n${data.stack || ''}`;
+                } else {
+                    logMessage += '\n' + JSON.stringify(data, null, 2);
+                }
+            } catch (e) {
+                logMessage += `\nData: ${data}`;
+            }
+        }
+        
+        authDebugInfo.textContent = logMessage + '\n\n' + authDebugInfo.textContent;
+        console.log(logMessage, data);
+    }
+}
+
 // Event listeners
 document.addEventListener('DOMContentLoaded', function() {
-    initializeApp();
+    logDebug('App initialized');
     
-    // Add Google login button if it exists
-    const googleLoginBtn = document.getElementById('google-login-btn');
-    if (googleLoginBtn) {
-        googleLoginBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            loginWithGoogle();
-        });
-    }
-    
-    // Add Google register button if it exists
-    const googleRegisterBtn = document.getElementById('google-register-btn');
-    if (googleRegisterBtn) {
-        googleRegisterBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            loginWithGoogle(); // Uses the same function as login
-        });
+    try {
+        // Verify Firebase is loaded
+        if (typeof firebase === 'undefined') {
+            logDebug('Firebase not loaded!');
+        } else {
+            logDebug('Firebase loaded successfully');
+            // Check Firebase auth
+            if (typeof firebase.auth === 'undefined') {
+                logDebug('Firebase Auth not loaded!');
+            } else {
+                logDebug('Firebase Auth loaded successfully');
+            }
+        }
+        
+        initializeApp();
+        
+        // Add Google login button if it exists
+        const googleLoginBtn = document.getElementById('google-login-btn');
+        if (googleLoginBtn) {
+            googleLoginBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                logDebug('Google login button clicked');
+                loginWithGoogle();
+            });
+        } else {
+            logDebug('Google login button not found!');
+        }
+        
+        // Add Google register button if it exists
+        const googleRegisterBtn = document.getElementById('google-register-btn');
+        if (googleRegisterBtn) {
+            googleRegisterBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                logDebug('Google register button clicked');
+                loginWithGoogle(); // Uses the same function as login
+            });
+        }
+    } catch (error) {
+        logDebug('Error during initialization', error);
     }
 });
 
@@ -197,12 +252,15 @@ copyBtn.addEventListener('click', function() {
 // Authentication functions
 function initializeApp() {
     // Check if user is logged in
+    logDebug('Setting up auth state listener');
     auth.onAuthStateChanged(async function(user) {
         if (user) {
+            logDebug('User logged in', { uid: user.uid, email: user.email, displayName: user.displayName });
             currentUser = user;
             await loadUserData();
             updateUI();
         } else {
+            logDebug('No user logged in');
             currentUser = null;
             showLoginScreen();
         }
@@ -225,48 +283,82 @@ function showAuthForm(type) {
 }
 
 function login(email, password) {
+    logDebug('Attempting to login with email', { email });
     auth.signInWithEmailAndPassword(email, password)
         .then(() => {
+            logDebug('Email login successful');
             authModal.style.display = 'none';
             loginForm.reset();
         })
         .catch(error => {
+            logDebug('Email login failed', error);
             showAlert(loginFormContainer, error.message, 'error');
         });
 }
 
 function loginWithGoogle() {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithPopup(provider)
-        .then((result) => {
-            // Check if this is a new user
-            const isNewUser = result.additionalUserInfo.isNewUser;
-            if (isNewUser) {
-                // Create initial user document in Firestore
-                return db.collection('users').doc(result.user.uid).set({
-                    displayName: result.user.displayName,
+    logDebug('Attempting Google sign-in');
+    try {
+        if (!firebase.auth) {
+            logDebug('Firebase Auth not available');
+            showAlert(loginFormContainer, 'Firebase Auth not available', 'error');
+            return;
+        }
+        
+        if (!firebase.auth.GoogleAuthProvider) {
+            logDebug('Google Auth Provider not available');
+            showAlert(loginFormContainer, 'Google Auth Provider not available', 'error');
+            return;
+        }
+        
+        const provider = new firebase.auth.GoogleAuthProvider();
+        logDebug('Google Auth Provider created');
+        
+        auth.signInWithPopup(provider)
+            .then((result) => {
+                logDebug('Google sign-in successful', { 
+                    uid: result.user.uid,
                     email: result.user.email,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    displayName: result.user.displayName
                 });
-            }
-        })
-        .then(() => {
-            authModal.style.display = 'none';
-        })
-        .catch(error => {
-            showAlert(loginFormContainer, error.message, 'error');
-        });
+                
+                // Check if this is a new user
+                const isNewUser = result.additionalUserInfo.isNewUser;
+                if (isNewUser) {
+                    logDebug('New user - creating profile document');
+                    // Create initial user document in Firestore
+                    return db.collection('users').doc(result.user.uid).set({
+                        displayName: result.user.displayName,
+                        email: result.user.email,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }
+            })
+            .then(() => {
+                authModal.style.display = 'none';
+            })
+            .catch(error => {
+                logDebug('Google sign-in failed', error);
+                showAlert(loginFormContainer, error.message, 'error');
+            });
+    } catch (error) {
+        logDebug('Error in Google sign-in', error);
+        showAlert(loginFormContainer, 'Error initializing Google sign-in: ' + error.message, 'error');
+    }
 }
 
 function register(email, password, displayName) {
+    logDebug('Attempting to register', { email, displayName });
     auth.createUserWithEmailAndPassword(email, password)
         .then(userCredential => {
+            logDebug('User created successfully');
             // Set display name
             return userCredential.user.updateProfile({
                 displayName: displayName
             });
         })
         .then(() => {
+            logDebug('Display name updated');
             // Create initial user document in Firestore
             return db.collection('users').doc(auth.currentUser.uid).set({
                 displayName: displayName,
@@ -275,20 +367,25 @@ function register(email, password, displayName) {
             });
         })
         .then(() => {
+            logDebug('User document created in Firestore');
             authModal.style.display = 'none';
             registerForm.reset();
         })
         .catch(error => {
+            logDebug('Registration failed', error);
             showAlert(registerFormContainer, error.message, 'error');
         });
 }
 
 function logout() {
+    logDebug('Logging out');
     auth.signOut()
         .then(() => {
+            logDebug('Logout successful');
             showLoginScreen();
         })
         .catch(error => {
+            logDebug('Logout failed', error);
             console.error('Logout error:', error);
         });
 }
