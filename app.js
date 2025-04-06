@@ -156,6 +156,34 @@ document.addEventListener('DOMContentLoaded', function() {
                 logDebug('Firebase Auth not loaded!');
             } else {
                 logDebug('Firebase Auth loaded successfully');
+                
+                // Check for redirect result
+                auth.getRedirectResult()
+                    .then((result) => {
+                        if (result.user) {
+                            logDebug('Google sign-in redirect successful', { 
+                                uid: result.user.uid,
+                                email: result.user.email,
+                                displayName: result.user.displayName
+                            });
+                            
+                            // Check if this is a new user
+                            const isNewUser = result.additionalUserInfo.isNewUser;
+                            if (isNewUser) {
+                                logDebug('New user from redirect - creating profile document');
+                                // Create initial user document in Firestore
+                                return db.collection('users').doc(result.user.uid).set({
+                                    displayName: result.user.displayName,
+                                    email: result.user.email,
+                                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                                });
+                            }
+                        }
+                    })
+                    .catch((error) => {
+                        logDebug('Google sign-in redirect result error', error);
+                        // Don't show error to user for redirect result, as they may just be visiting the page
+                    });
             }
         }
         
@@ -314,31 +342,13 @@ function loginWithGoogle() {
         const provider = new firebase.auth.GoogleAuthProvider();
         logDebug('Google Auth Provider created');
         
-        auth.signInWithPopup(provider)
-            .then((result) => {
-                logDebug('Google sign-in successful', { 
-                    uid: result.user.uid,
-                    email: result.user.email,
-                    displayName: result.user.displayName
-                });
-                
-                // Check if this is a new user
-                const isNewUser = result.additionalUserInfo.isNewUser;
-                if (isNewUser) {
-                    logDebug('New user - creating profile document');
-                    // Create initial user document in Firestore
-                    return db.collection('users').doc(result.user.uid).set({
-                        displayName: result.user.displayName,
-                        email: result.user.email,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                }
-            })
-            .then(() => {
-                authModal.style.display = 'none';
-            })
+        // Close the modal before redirect
+        authModal.style.display = 'none';
+        
+        // Use redirect instead of popup
+        auth.signInWithRedirect(provider)
             .catch(error => {
-                logDebug('Google sign-in failed', error);
+                logDebug('Google sign-in redirect failed', error);
                 showAlert(loginFormContainer, error.message, 'error');
             });
     } catch (error) {
