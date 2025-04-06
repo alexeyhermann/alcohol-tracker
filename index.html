@@ -1,0 +1,93 @@
+ <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alcohol Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="app.js" defer></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Alcohol Tracker</h1>
+            <p>Track your alcohol consumption and earn achievements for drinking less</p>
+        </header>
+
+        <main>
+            <section class="input-section">
+                <h2>Log Consumption</h2>
+                <form id="alcohol-form">
+                    <div class="form-group">
+                        <label for="date">Date:</label>
+                        <input type="text" id="date" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="drink-type">Drink Type:</label>
+                        <select id="drink-type" required>
+                            <option value="beer">Beer</option>
+                            <option value="wine">Wine</option>
+                            <option value="spirits">Spirits</option>
+                            <option value="cocktail">Cocktail</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="standard-drinks">Standard Drinks:</label>
+                        <input type="number" id="standard-drinks" min="0.5" step="0.5" value="1" required>
+                        <small>1 standard drink = 10g pure alcohol</small>
+                    </div>
+                    <button type="submit" class="btn">Add Entry</button>
+                </form>
+            </section>
+
+            <section class="calendar-section">
+                <h2>Calendar</h2>
+                <div id="calendar"></div>
+            </section>
+
+            <section class="stats-section">
+                <h2>Your Stats</h2>
+                <div class="stats-container">
+                    <div class="stat-card">
+                        <h3>Weekly Total</h3>
+                        <p id="weekly-total">0 drinks</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Monthly Average</h3>
+                        <p id="monthly-average">0 drinks/day</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Sober Days</h3>
+                        <p id="sober-days">0 days</p>
+                    </div>
+                </div>
+            </section>
+
+            <section class="achievements-section">
+                <h2>Achievements</h2>
+                <div id="achievements-container" class="achievements-container">
+                    <!-- Achievements will be added here by JavaScript -->
+                </div>
+            </section>
+
+            <section class="share-section">
+                <h2>Share Your Progress</h2>
+                <div class="share-options">
+                    <button id="share-btn" class="btn share-btn">Generate Share Link</button>
+                    <div id="share-link-container" class="share-link-container" style="display: none;">
+                        <input type="text" id="share-link" readonly>
+                        <button id="copy-btn" class="btn copy-btn">Copy</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Use this tool responsibly. If you need help with alcohol dependency, please seek professional support.</p>
+        </footer>
+    </div>
+</body>
+</html> 
