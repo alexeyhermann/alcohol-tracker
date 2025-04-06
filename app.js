@@ -43,6 +43,29 @@ if (isDebugMode && authDebugContainer) {
 let currentUser = null;
 let drinkEntries = [];
 let achievements = [];
+let networkConnectionStatus = { isOnline: navigator.onLine };
+
+// Network status monitoring
+window.addEventListener('online', function() {
+    logDebug('Network connection restored');
+    networkConnectionStatus.isOnline = true;
+    if (currentUser) {
+        refreshUserData();
+    }
+});
+
+window.addEventListener('offline', function() {
+    logDebug('Network connection lost');
+    networkConnectionStatus.isOnline = false;
+});
+
+// Document visibility change event (for tab switching)
+document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && currentUser) {
+        logDebug('Tab became visible, refreshing data');
+        refreshUserData();
+    }
+});
 
 // Achievement definitions
 const achievementDefinitions = [
@@ -270,10 +293,20 @@ function showAuthForm(type) {
 function login(email, password) {
     logDebug('Attempting to login with email', { email });
     auth.signInWithEmailAndPassword(email, password)
-        .then(() => {
+        .then((userCredential) => {
             logDebug('Email login successful');
             authModal.style.display = 'none';
             loginForm.reset();
+            
+            // Force a refresh of data
+            setTimeout(() => {
+                if (currentUser) {
+                    logDebug('Post-login refresh triggered');
+                    refreshUserData().catch(error => {
+                        logDebug('Post-login refresh failed, but user logged in', error);
+                    });
+                }
+            }, 1000);
         })
         .catch(error => {
             logDebug('Email login failed', error);
@@ -990,7 +1023,13 @@ window.addEventListener('DOMContentLoaded', function() {
 function refreshUserData() {
     if (!currentUser) {
         logDebug('Cannot refresh: No user logged in');
-        return;
+        return Promise.reject(new Error('No user logged in'));
+    }
+    
+    if (!networkConnectionStatus.isOnline) {
+        logDebug('Cannot refresh: Device is offline');
+        showAlert(document.querySelector('.stats-section'), 'Unable to refresh: You are offline', 'error');
+        return Promise.reject(new Error('Device is offline'));
     }
     
     logDebug('Manual refresh requested');
@@ -1013,8 +1052,20 @@ function refreshUserData() {
     // Clear cache
     drinkEntries = [];
     
-    // Re-load data
-    loadUserData()
+    // Attempt to refresh Firestore connection
+    return db.clearPersistence()
+        .catch(error => {
+            logDebug('Warning: Could not clear persistence', error);
+            // Continue anyway, this error is not fatal
+        })
+        .then(() => {
+            logDebug('Reestablishing database connection');
+            return db.collection('users').doc(currentUser.uid).get();
+        })
+        .then(() => {
+            logDebug('Database connection refreshed');
+            return loadUserData();
+        })
         .then(() => {
             logDebug('Manual refresh completed');
             // Reset button
@@ -1031,6 +1082,7 @@ function refreshUserData() {
             refreshDataBtn.disabled = false;
             
             // Show error message
-            showAlert(document.querySelector('.stats-section'), 'Failed to refresh data. Try again.', 'error');
+            showAlert(document.querySelector('.stats-section'), 'Failed to refresh data: ' + error.message, 'error');
+            return Promise.reject(error);
         });
 } 
