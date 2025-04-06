@@ -17,11 +17,12 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-// Configure Firestore for simpler and more reliable syncing
-// Disable persistence and caching for more immediate sync
+// Set Firestore settings for reliability
+// Turn off cache - always fetch from server
 db.settings({
-  cacheSizeBytes: 0, // Disable cache for testing
-  ignoreUndefinedProperties: true // More lenient data handling
+  cacheSizeBytes: 0,
+  ignoreUndefinedProperties: true,
+  merge: true
 });
 
 /*

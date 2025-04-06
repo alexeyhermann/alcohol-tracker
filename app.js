@@ -294,90 +294,119 @@ function initializeApp() {
             logDebug('User logged in', { uid: user.uid, email: user.email, displayName: user.displayName });
             currentUser = user;
             
-            // First do a direct fetch for immediate results
-            try {
-                logDebug('Performing initial direct data fetch...');
-                
-                // Verify Firestore collection for debugging
-                const userDocRef = db.collection('users').doc(user.uid);
-                const userDoc = await userDocRef.get();
-                
-                logDebug('User document exists:', { exists: userDoc.exists });
-                
-                // Fetch entries directly
-                const entriesSnapshot = await userDocRef
-                    .collection('drinkEntries')
-                    .get();
-                
-                logDebug(`Initial fetch: Found ${entriesSnapshot.docs.length} raw entries`);
-                
-                // Process the entries
-                const entriesMap = new Map(); // Use a map to deduplicate
-                
-                entriesSnapshot.docs.forEach(doc => {
-                    const data = doc.data();
-                    logDebug('Entry data:', { id: doc.id, date: data.date, drinks: data.drinks });
-                    
-                    // Only add if this date isn't already in our map or if this update is newer
-                    if (!entriesMap.has(data.date) || 
-                        (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
-                        getTimestampMillis(data.lastUpdated) > getTimestampMillis(entriesMap.get(data.date).lastUpdated)))) {
-                        entriesMap.set(data.date, {
-                            id: doc.id,
-                            date: data.date,
-                            drinks: data.drinks || [],
-                            lastUpdated: data.lastUpdated
-                        });
-                    }
-                });
-                
-                // Convert map back to array and sort by date
-                drinkEntries = Array.from(entriesMap.values())
-                    .sort((a, b) => new Date(a.date) - new Date(b.date));
-                
-                logDebug(`Initial fetch: Processed ${drinkEntries.length} unique entries`);
-                
-                // Fetch achievements directly
-                const achievementsDoc = await userDocRef
-                    .collection('userData')
-                    .doc('achievements')
-                    .get();
-                
-                if (achievementsDoc.exists) {
-                    achievements = achievementsDoc.data().list || [];
-                } else {
-                    achievements = [];
+            // Fetch data directly
+            await fetchUserData();
+            
+            // Update UI immediately
+            updateUI();
+            
+            // Set up a periodic refresh every 10 seconds while the app is open
+            window.dataRefreshInterval = setInterval(() => {
+                if (currentUser && !document.hidden) {
+                    logDebug('Periodic data refresh');
+                    fetchUserData(false).catch(error => {
+                        logDebug('Periodic refresh failed', error);
+                    });
                 }
-                
-                logDebug(`Initial fetch: Found ${achievements.length} achievements`);
-                
-                // Update UI immediately
-                updateUI();
-                
-                // Then set up listeners for future updates
-                await setupRealTimeListeners();
-                
-                // Force a refresh after a short delay to ensure we have the latest data
-                setTimeout(() => {
-                    if (currentUser) {
-                        logDebug('Post-login forced refresh for data consistency');
-                        refreshUserData().catch(error => {
-                            logDebug('Post-login refresh failed', error);
-                        });
-                    }
-                }, 2000);
-            } catch (error) {
-                logDebug('Error during initial data fetch', error);
-                // Still try to set up listeners even if direct fetch failed
-                await setupRealTimeListeners();
-                updateUI();
-            }
+            }, 10000);
         } else {
             logDebug('No user logged in');
             currentUser = null;
+            
+            // Clear any refresh interval
+            if (window.dataRefreshInterval) {
+                clearInterval(window.dataRefreshInterval);
+                window.dataRefreshInterval = null;
+            }
+            
             showLoginScreen();
         }
     });
+}
+
+// Direct data fetching instead of listeners
+async function fetchUserData(showLoadingState = true) {
+    if (!currentUser) {
+        logDebug('Cannot fetch data: No user logged in');
+        return Promise.reject(new Error('No user logged in'));
+    }
+    
+    if (showLoadingState && refreshDataBtn) {
+        refreshDataBtn.textContent = 'Loading...';
+        refreshDataBtn.disabled = true;
+    }
+    
+    try {
+        logDebug('Fetching user data directly...');
+        
+        // Get user doc reference
+        const userDocRef = db.collection('users').doc(currentUser.uid);
+        
+        // Fetch all entries without sorting (we'll sort client-side)
+        const entriesSnapshot = await userDocRef
+            .collection('drinkEntries')
+            .get({ source: 'server' }); // Force from server, not cache
+        
+        logDebug(`Fetched ${entriesSnapshot.docs.length} entries`);
+        
+        // Clear existing entries
+        drinkEntries = [];
+        
+        // Process each document
+        entriesSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            
+            // Validate and add to local array
+            if (data && data.date && Array.isArray(data.drinks)) {
+                drinkEntries.push({
+                    id: doc.id,
+                    date: data.date,
+                    drinks: data.drinks || [],
+                    lastUpdated: data.lastUpdated || new Date()
+                });
+                
+                logDebug(`Entry loaded: ${data.date} with ${data.drinks.length} drinks`);
+            } else {
+                logDebug(`Skipping invalid entry: ${doc.id}`, data);
+            }
+        });
+        
+        // Sort entries by date
+        drinkEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
+        
+        logDebug(`Total entries loaded: ${drinkEntries.length}`);
+        
+        // Fetch achievements
+        const achievementsDoc = await userDocRef
+            .collection('userData')
+            .doc('achievements')
+            .get({ source: 'server' }); // Force from server
+        
+        if (achievementsDoc.exists) {
+            achievements = achievementsDoc.data().list || [];
+        } else {
+            achievements = [];
+        }
+        
+        // Update UI with fetched data
+        renderCalendar();
+        updateStats();
+        renderAchievements();
+        checkAchievements();
+        
+    } catch (error) {
+        logDebug('Error fetching user data', error);
+        console.error('Error fetching user data:', error);
+        
+        if (showLoadingState) {
+            showAlert(document.querySelector('.stats-section'), 'Failed to fetch data: ' + error.message, 'error');
+        }
+    } finally {
+        if (showLoadingState && refreshDataBtn) {
+            refreshDataBtn.textContent = 'Refresh Data';
+            refreshDataBtn.disabled = false;
+        }
+    }
 }
 
 function showAuthModal(type) {
@@ -452,16 +481,15 @@ function register(email, password, displayName) {
 function logout() {
     logDebug('Logging out');
     
-    // Unsubscribe from Firestore listeners
-    if (window.entriesUnsubscribe) {
-        window.entriesUnsubscribe();
-        window.entriesUnsubscribe = null;
+    // Clear any refresh interval
+    if (window.dataRefreshInterval) {
+        clearInterval(window.dataRefreshInterval);
+        window.dataRefreshInterval = null;
     }
     
-    if (window.achievementsUnsubscribe) {
-        window.achievementsUnsubscribe();
-        window.achievementsUnsubscribe = null;
-    }
+    // Clear data
+    drinkEntries = [];
+    achievements = [];
     
     auth.signOut()
         .then(() => {
@@ -638,7 +666,7 @@ async function addDrinkEntry() {
             // Update existing entry
             const existingEntry = drinkEntries[existingEntryIndex];
             
-            // Create a simple drinks array with just type and amount - no timestamp objects
+            // Create a simple drinks array with just type and amount
             const updatedDrinks = [...existingEntry.drinks, {
                 type: drinkType,
                 amount: standardDrinks
@@ -647,7 +675,7 @@ async function addDrinkEntry() {
             // Log the entry we're updating for debugging
             logDebug('Updating entry with ID', { id: existingEntry.id, path: `users/${currentUser.uid}/drinkEntries/${existingEntry.id}` });
             
-            // Update in Firestore with only simple properties
+            // Update in Firestore
             await db.collection('users').doc(currentUser.uid)
                 .collection('drinkEntries').doc(existingEntry.id)
                 .update({
@@ -656,6 +684,15 @@ async function addDrinkEntry() {
                 });
             
             logDebug('Updated existing entry', { id: existingEntry.id, totalDrinks: updatedDrinks.length });
+            
+            // Update local data
+            drinkEntries[existingEntryIndex].drinks = updatedDrinks;
+            drinkEntries[existingEntryIndex].lastUpdated = new Date();
+            
+            // Update UI
+            renderCalendar();
+            updateStats();
+            checkAchievements();
         } else {
             // Create new entry with simple properties only
             const newEntry = {
@@ -677,7 +714,7 @@ async function addDrinkEntry() {
             
             logDebug('Created new entry with ID', { id: docRef.id, date });
             
-            // Add the entry to local data immediately to ensure it's visible
+            // Add the entry to local data
             drinkEntries.push({
                 id: docRef.id,
                 date,
@@ -688,21 +725,22 @@ async function addDrinkEntry() {
             // Sort entries by date
             drinkEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
             
-            // Update UI immediately
+            // Update UI
             renderCalendar();
             updateStats();
+            checkAchievements();
         }
-        
-        // Force a refresh of data immediately to ensure cross-browser consistency
-        setTimeout(() => {
-            refreshUserData().catch(error => {
-                logDebug('Post-add refresh failed', error);
-            });
-        }, 1000);
         
         // Reset form
         alcoholForm.reset();
         dateInput._flatpickr.setDate('today');
+        
+        // Force a fresh fetch from server
+        setTimeout(() => {
+            fetchUserData(false).catch(error => {
+                logDebug('Post-add data fetch failed', error);
+            });
+        }, 1000);
     } catch (error) {
         logDebug('Error adding drink entry', error);
         console.error('Error adding drink entry:', error);
@@ -1168,239 +1206,13 @@ window.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// Manual refresh function
+// Manual refresh function - simplified to use fetchUserData
 function refreshUserData() {
     if (!currentUser) {
         logDebug('Cannot refresh: No user logged in');
         return Promise.reject(new Error('No user logged in'));
     }
     
-    if (!networkConnectionStatus.isOnline) {
-        logDebug('Cannot refresh: Device is offline');
-        showAlert(document.querySelector('.stats-section'), 'Unable to refresh: You are offline', 'error');
-        return Promise.reject(new Error('Device is offline'));
-    }
-    
     logDebug('Manual refresh requested');
-    
-    // Show loading state
-    refreshDataBtn.textContent = 'Loading...';
-    refreshDataBtn.disabled = true;
-    
-    // Force unsubscribe from existing listeners
-    if (window.entriesUnsubscribe) {
-        window.entriesUnsubscribe();
-        window.entriesUnsubscribe = null;
-    }
-    
-    if (window.achievementsUnsubscribe) {
-        window.achievementsUnsubscribe();
-        window.achievementsUnsubscribe = null;
-    }
-    
-    // Clear existing data
-    drinkEntries = [];
-    achievements = [];
-    
-    // Use direct fetch instead of listeners for immediate results
-    return Promise.all([
-        // Fetch entries directly, sorting by lastUpdated to ensure newest data
-        db.collection('users').doc(currentUser.uid)
-            .collection('drinkEntries')
-            .orderBy('lastUpdated', 'desc') // Sort by most recent updates first
-            .get()
-            .then(snapshot => {
-                // Process the entries
-                const entriesMap = new Map(); // Use a map to deduplicate
-                
-                snapshot.docs.forEach(doc => {
-                    const data = doc.data();
-                    // Only add if this date isn't already in our map or if this update is newer
-                    if (!entriesMap.has(data.date) || 
-                        (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
-                        getTimestampMillis(data.lastUpdated) > getTimestampMillis(entriesMap.get(data.date).lastUpdated)))) {
-                        entriesMap.set(data.date, {
-                            id: doc.id,
-                            date: data.date,
-                            drinks: data.drinks || [],
-                            lastUpdated: data.lastUpdated
-                        });
-                    }
-                });
-                
-                // Convert map back to array and sort by date
-                drinkEntries = Array.from(entriesMap.values())
-                    .sort((a, b) => new Date(a.date) - new Date(b.date));
-                
-                logDebug(`Fetched ${drinkEntries.length} entries directly (with timestamp sorting)`);
-            }),
-            
-        // Fetch achievements directly
-        db.collection('users').doc(currentUser.uid)
-            .collection('userData')
-            .doc('achievements')
-            .get()
-            .then(doc => {
-                if (doc.exists) {
-                    achievements = doc.data().list || [];
-                } else {
-                    achievements = [];
-                }
-                
-                logDebug(`Fetched ${achievements.length} achievements directly`);
-            })
-    ])
-    .then(() => {
-        // Update UI with the fetched data
-        renderCalendar();
-        updateStats();
-        checkAchievements();
-        renderAchievements();
-        
-        // Now set up listeners for future updates with new timestamp ordering
-        return setupRealTimeListeners();
-    })
-    .then(() => {
-        logDebug('Manual refresh completed with server timestamp ordering');
-        // Reset button
-        refreshDataBtn.textContent = 'Refresh Data';
-        refreshDataBtn.disabled = false;
-        
-        // Show success message
-        showAlert(document.querySelector('.stats-section'), 'Data refreshed successfully!', 'success');
-    })
-    .catch(error => {
-        logDebug('Manual refresh failed', error);
-        // Reset button
-        refreshDataBtn.textContent = 'Refresh Data';
-        refreshDataBtn.disabled = false;
-        
-        // Show error message
-        showAlert(document.querySelector('.stats-section'), 'Failed to refresh data: ' + error.message, 'error');
-        return Promise.reject(error);
-    });
-}
-
-// Set up real-time listeners with timestamp ordering
-async function setupRealTimeListeners() {
-    if (!currentUser) {
-        logDebug('No current user, cannot set up listeners');
-        return;
-    }
-    
-    try {
-        logDebug('Setting up real-time listeners with timestamp ordering', { uid: currentUser.uid });
-        
-        // Unsubscribe from previous listeners if they exist
-        if (window.entriesUnsubscribe) {
-            logDebug('Unsubscribing from previous entries listener');
-            window.entriesUnsubscribe();
-            window.entriesUnsubscribe = null;
-        }
-        
-        if (window.achievementsUnsubscribe) {
-            logDebug('Unsubscribing from previous achievements listener');
-            window.achievementsUnsubscribe();
-            window.achievementsUnsubscribe = null;
-        }
-        
-        // Set up real-time listener for user drink entries with timestamp ordering
-        try {
-            const entriesRef = db.collection('users').doc(currentUser.uid)
-                .collection('drinkEntries')
-                .orderBy('lastUpdated', 'desc'); // Order by most recent updates
-                
-            logDebug('Creating entries listener with timestamp ordering', { path: `users/${currentUser.uid}/drinkEntries` });
-            
-            window.entriesUnsubscribe = entriesRef.onSnapshot(
-                snapshot => {
-                    logDebug(`Received ${snapshot.docs.length} entries from Firestore (real-time with timestamp ordering)`);
-                    
-                    // Process the entries with timestamps
-                    const entriesMap = new Map(); // Use a map to deduplicate
-                    
-                    snapshot.docs.forEach(doc => {
-                        const data = doc.data();
-                        // Only add if this date isn't already in our map or if this update is newer
-                        if (!entriesMap.has(data.date) || 
-                            (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
-                            getTimestampMillis(data.lastUpdated) > getTimestampMillis(entriesMap.get(data.date).lastUpdated)))) {
-                            entriesMap.set(data.date, {
-                                id: doc.id,
-                                date: data.date,
-                                drinks: data.drinks || [],
-                                lastUpdated: data.lastUpdated
-                            });
-                        }
-                    });
-                    
-                    // Convert map back to array and sort by date
-                    drinkEntries = Array.from(entriesMap.values())
-                        .sort((a, b) => new Date(a.date) - new Date(b.date));
-                    
-                    // Log the entries for debugging
-                    logDebug('Entries received with timestamp ordering', { 
-                        count: drinkEntries.length, 
-                        sample: drinkEntries.length > 0 ? drinkEntries[0] : null 
-                    });
-                    
-                    // Update UI with new data
-                    renderCalendar();
-                    updateStats();
-                    checkAchievements();
-                }, 
-                error => {
-                    logDebug('Error in entries listener', error);
-                    console.error('Error in entries listener:', error);
-                    
-                    // Try to re-establish connection after a delay
-                    setTimeout(() => {
-                        logDebug('Attempting to reconnect entries listener');
-                        if (window.entriesUnsubscribe) {
-                            window.entriesUnsubscribe();
-                            window.entriesUnsubscribe = null;
-                        }
-                        setupRealTimeListeners();
-                    }, 5000);
-                }
-            );
-            
-            logDebug('Entries listener with timestamp ordering established successfully');
-        } catch (entriesError) {
-            logDebug('Failed to set up entries listener', entriesError);
-        }
-        
-        // Set up real-time listener for user achievements
-        try {
-            const achievementsRef = db.collection('users').doc(currentUser.uid)
-                .collection('userData')
-                .doc('achievements');
-                
-            logDebug('Creating achievements listener', { path: `users/${currentUser.uid}/userData/achievements` });
-            
-            window.achievementsUnsubscribe = achievementsRef.onSnapshot(
-                doc => {
-                    logDebug('Achievements document updated', { exists: doc.exists });
-                    if (doc.exists) {
-                        achievements = doc.data().list || [];
-                    } else {
-                        achievements = [];
-                    }
-                    
-                    renderAchievements();
-                }, 
-                error => {
-                    logDebug('Error in achievements listener', error);
-                    console.error('Error in achievements listener:', error);
-                }
-            );
-            
-            logDebug('Achievements listener established successfully');
-        } catch (achievementsError) {
-            logDebug('Failed to set up achievements listener', achievementsError);
-        }
-    } catch (error) {
-        logDebug('Error setting up real-time listeners with timestamp ordering', error);
-        console.error('Error setting up real-time listeners:', error);
-    }
+    return fetchUserData(true);
 } 
