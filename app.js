@@ -265,8 +265,53 @@ function initializeApp() {
         if (user) {
             logDebug('User logged in', { uid: user.uid, email: user.email, displayName: user.displayName });
             currentUser = user;
-            await loadUserData();
-            updateUI();
+            
+            // First do a direct fetch for immediate results
+            try {
+                logDebug('Performing initial direct data fetch');
+                
+                // Fetch entries directly
+                const entriesSnapshot = await db.collection('users').doc(user.uid)
+                    .collection('drinkEntries')
+                    .orderBy('date')
+                    .get();
+                
+                drinkEntries = entriesSnapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        id: doc.id,
+                        date: data.date,
+                        drinks: data.drinks || []
+                    };
+                });
+                
+                logDebug(`Initial fetch: Found ${drinkEntries.length} entries`);
+                
+                // Fetch achievements directly
+                const achievementsDoc = await db.collection('users').doc(user.uid)
+                    .collection('userData')
+                    .doc('achievements')
+                    .get();
+                
+                if (achievementsDoc.exists) {
+                    achievements = achievementsDoc.data().list || [];
+                } else {
+                    achievements = [];
+                }
+                
+                logDebug(`Initial fetch: Found ${achievements.length} achievements`);
+                
+                // Update UI immediately
+                updateUI();
+                
+                // Then set up listeners for future updates
+                await loadUserData();
+            } catch (error) {
+                logDebug('Error during initial data fetch', error);
+                // Still try to set up listeners even if direct fetch failed
+                await loadUserData();
+                updateUI();
+            }
         } else {
             logDebug('No user logged in');
             currentUser = null;
@@ -1038,7 +1083,7 @@ function refreshUserData() {
     refreshDataBtn.textContent = 'Loading...';
     refreshDataBtn.disabled = true;
     
-    // Force unsubscribe and resubscribe
+    // Force unsubscribe from existing listeners
     if (window.entriesUnsubscribe) {
         window.entriesUnsubscribe();
         window.entriesUnsubscribe = null;
@@ -1049,40 +1094,72 @@ function refreshUserData() {
         window.achievementsUnsubscribe = null;
     }
     
-    // Clear cache
+    // Clear existing data
     drinkEntries = [];
+    achievements = [];
     
-    // Attempt to refresh Firestore connection
-    return db.clearPersistence()
-        .catch(error => {
-            logDebug('Warning: Could not clear persistence', error);
-            // Continue anyway, this error is not fatal
-        })
-        .then(() => {
-            logDebug('Reestablishing database connection');
-            return db.collection('users').doc(currentUser.uid).get();
-        })
-        .then(() => {
-            logDebug('Database connection refreshed');
-            return loadUserData();
-        })
-        .then(() => {
-            logDebug('Manual refresh completed');
-            // Reset button
-            refreshDataBtn.textContent = 'Refresh Data';
-            refreshDataBtn.disabled = false;
+    // Use direct fetch instead of listeners for immediate results
+    return Promise.all([
+        // Fetch entries directly
+        db.collection('users').doc(currentUser.uid)
+            .collection('drinkEntries')
+            .orderBy('date')
+            .get()
+            .then(snapshot => {
+                drinkEntries = snapshot.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        id: doc.id,
+                        date: data.date,
+                        drinks: data.drinks || []
+                    };
+                });
+                
+                logDebug(`Fetched ${drinkEntries.length} entries directly`);
+            }),
             
-            // Show success message
-            showAlert(document.querySelector('.stats-section'), 'Data refreshed successfully!', 'success');
-        })
-        .catch(error => {
-            logDebug('Manual refresh failed', error);
-            // Reset button
-            refreshDataBtn.textContent = 'Refresh Data';
-            refreshDataBtn.disabled = false;
-            
-            // Show error message
-            showAlert(document.querySelector('.stats-section'), 'Failed to refresh data: ' + error.message, 'error');
-            return Promise.reject(error);
-        });
+        // Fetch achievements directly
+        db.collection('users').doc(currentUser.uid)
+            .collection('userData')
+            .doc('achievements')
+            .get()
+            .then(doc => {
+                if (doc.exists) {
+                    achievements = doc.data().list || [];
+                } else {
+                    achievements = [];
+                }
+                
+                logDebug(`Fetched ${achievements.length} achievements directly`);
+            })
+    ])
+    .then(() => {
+        // Update UI with the fetched data
+        renderCalendar();
+        updateStats();
+        checkAchievements();
+        renderAchievements();
+        
+        // Now set up listeners for future updates
+        return loadUserData();
+    })
+    .then(() => {
+        logDebug('Manual refresh completed');
+        // Reset button
+        refreshDataBtn.textContent = 'Refresh Data';
+        refreshDataBtn.disabled = false;
+        
+        // Show success message
+        showAlert(document.querySelector('.stats-section'), 'Data refreshed successfully!', 'success');
+    })
+    .catch(error => {
+        logDebug('Manual refresh failed', error);
+        // Reset button
+        refreshDataBtn.textContent = 'Refresh Data';
+        refreshDataBtn.disabled = false;
+        
+        // Show error message
+        showAlert(document.querySelector('.stats-section'), 'Failed to refresh data: ' + error.message, 'error');
+        return Promise.reject(error);
+    });
 } 

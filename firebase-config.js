@@ -17,23 +17,11 @@ firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-// Configure Firestore for better cross-browser sync
+// Configure Firestore for simpler and more reliable syncing
+// Disable persistence and caching for more immediate sync
 db.settings({
-  cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
-});
-
-// Enable offline persistence with multi-tab support
-firebase.firestore().enablePersistence({
-  synchronizeTabs: true
-})
-.catch(err => {
-  if (err.code === 'failed-precondition') {
-    // Multiple tabs open, persistence can only be enabled in one tab
-    console.warn("Firestore persistence failed: Multiple tabs open");
-  } else if (err.code === 'unimplemented') {
-    // The browser doesn't support persistence
-    console.warn("Firestore persistence not available in this browser");
-  }
+  cacheSizeBytes: 0, // Disable cache for testing
+  ignoreUndefinedProperties: true // More lenient data handling
 });
 
 /*
