@@ -340,15 +340,26 @@ function loginWithGoogle() {
         }
         
         const provider = new firebase.auth.GoogleAuthProvider();
-        logDebug('Google Auth Provider created');
+        // Add scopes if needed
+        provider.addScope('profile');
+        provider.addScope('email');
+        
+        logDebug('Google Auth Provider created with scopes');
+        
+        // Set custom parameters
+        provider.setCustomParameters({
+            'prompt': 'select_account'
+        });
         
         // Close the modal before redirect
         authModal.style.display = 'none';
         
         // Use redirect instead of popup
-        auth.signInWithRedirect(provider)
+        logDebug('Initiating Google sign-in redirect');
+        firebase.auth().signInWithRedirect(provider)
             .catch(error => {
                 logDebug('Google sign-in redirect failed', error);
+                authModal.style.display = 'block';
                 showAlert(loginFormContainer, error.message, 'error');
             });
     } catch (error) {

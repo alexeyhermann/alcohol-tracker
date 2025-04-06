@@ -4,7 +4,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyArelhcucu4_hcR28RsYXoOar1tYVshkoI",
   authDomain: "alcoholtracker-1cb4b.firebaseapp.com",
   projectId: "alcoholtracker-1cb4b",
-  storageBucket: "alcoholtracker-1cb4b.firebasestorage.app",
+  storageBucket: "alcoholtracker-1cb4b.appspot.com",
   messagingSenderId: "560186494253",
   appId: "1:560186494253:web:1678f40f7df2064ec397a4",
   measurementId: "G-SCE5CQVX86"
@@ -16,6 +16,12 @@ firebase.initializeApp(firebaseConfig);
 // Initialize Firebase services
 const auth = firebase.auth();
 const db = firebase.firestore();
+
+// Enable debug persistence for Firestore (remove in production)
+firebase.firestore().enablePersistence()
+  .catch(err => {
+    console.error("Firestore persistence error:", err);
+  });
 
 /*
   IMPORTANT: Before using this app, you need to replace the placeholder 
