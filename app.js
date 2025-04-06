@@ -268,24 +268,37 @@ function initializeApp() {
             
             // First do a direct fetch for immediate results
             try {
-                logDebug('Performing initial direct data fetch');
+                logDebug('Performing initial direct data fetch with timestamp ordering');
                 
                 // Fetch entries directly
                 const entriesSnapshot = await db.collection('users').doc(user.uid)
                     .collection('drinkEntries')
-                    .orderBy('date')
+                    .orderBy('lastUpdated', 'desc')
                     .get();
                 
-                drinkEntries = entriesSnapshot.docs.map(doc => {
+                // Process the entries with timestamps
+                const entriesMap = new Map(); // Use a map to deduplicate
+                
+                entriesSnapshot.docs.forEach(doc => {
                     const data = doc.data();
-                    return {
-                        id: doc.id,
-                        date: data.date,
-                        drinks: data.drinks || []
-                    };
+                    // Only add if this date isn't already in our map or if this update is newer
+                    if (!entriesMap.has(data.date) || 
+                        (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
+                        data.lastUpdated.toDate() > entriesMap.get(data.date).lastUpdated.toDate()))) {
+                        entriesMap.set(data.date, {
+                            id: doc.id,
+                            date: data.date,
+                            drinks: data.drinks || [],
+                            lastUpdated: data.lastUpdated
+                        });
+                    }
                 });
                 
-                logDebug(`Initial fetch: Found ${drinkEntries.length} entries`);
+                // Convert map back to array and sort by date
+                drinkEntries = Array.from(entriesMap.values())
+                    .sort((a, b) => new Date(a.date) - new Date(b.date));
+                
+                logDebug(`Initial fetch: Found ${drinkEntries.length} entries with timestamp ordering`);
                 
                 // Fetch achievements directly
                 const achievementsDoc = await db.collection('users').doc(user.uid)
@@ -305,11 +318,21 @@ function initializeApp() {
                 updateUI();
                 
                 // Then set up listeners for future updates
-                await loadUserData();
+                await setupRealTimeListeners();
+                
+                // Force a refresh after a short delay to ensure we have the latest data
+                setTimeout(() => {
+                    if (currentUser) {
+                        logDebug('Post-login forced refresh for data consistency');
+                        refreshUserData().catch(error => {
+                            logDebug('Post-login refresh failed', error);
+                        });
+                    }
+                }, 2000);
             } catch (error) {
                 logDebug('Error during initial data fetch', error);
                 // Still try to set up listeners even if direct fetch failed
-                await loadUserData();
+                await setupRealTimeListeners();
                 updateUI();
             }
         } else {
@@ -566,14 +589,16 @@ async function addDrinkEntry() {
             const existingEntry = drinkEntries[existingEntryIndex];
             const updatedDrinks = [...existingEntry.drinks, {
                 type: drinkType,
-                amount: standardDrinks
+                amount: standardDrinks,
+                addedAt: firebase.firestore.FieldValue.serverTimestamp()
             }];
             
             // Update in Firestore
             await db.collection('users').doc(currentUser.uid)
                 .collection('drinkEntries').doc(existingEntry.id)
                 .update({
-                    drinks: updatedDrinks
+                    drinks: updatedDrinks,
+                    lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
                 });
             
             logDebug('Updated existing entry', { id: existingEntry.id, totalDrinks: updatedDrinks.length });
@@ -583,8 +608,11 @@ async function addDrinkEntry() {
                 date,
                 drinks: [{
                     type: drinkType,
-                    amount: standardDrinks
-                }]
+                    amount: standardDrinks,
+                    addedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }],
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
             };
             
             // Add to Firestore
@@ -594,11 +622,16 @@ async function addDrinkEntry() {
             logDebug('Created new entry', { id: docRef.id, date });
         }
         
+        // Force a refresh of data immediately to ensure cross-browser consistency
+        setTimeout(() => {
+            refreshUserData().catch(error => {
+                logDebug('Post-add refresh failed', error);
+            });
+        }, 1000);
+        
         // Reset form
         alcoholForm.reset();
         dateInput._flatpickr.setDate('today');
-        
-        // UI will be updated by the onSnapshot listeners
     } catch (error) {
         logDebug('Error adding drink entry', error);
         console.error('Error adding drink entry:', error);
@@ -1100,22 +1133,35 @@ function refreshUserData() {
     
     // Use direct fetch instead of listeners for immediate results
     return Promise.all([
-        // Fetch entries directly
+        // Fetch entries directly, sorting by lastUpdated to ensure newest data
         db.collection('users').doc(currentUser.uid)
             .collection('drinkEntries')
-            .orderBy('date')
+            .orderBy('lastUpdated', 'desc') // Sort by most recent updates first
             .get()
             .then(snapshot => {
-                drinkEntries = snapshot.docs.map(doc => {
+                // Process the entries
+                const entriesMap = new Map(); // Use a map to deduplicate
+                
+                snapshot.docs.forEach(doc => {
                     const data = doc.data();
-                    return {
-                        id: doc.id,
-                        date: data.date,
-                        drinks: data.drinks || []
-                    };
+                    // Only add if this date isn't already in our map or if this update is newer
+                    if (!entriesMap.has(data.date) || 
+                        (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
+                        data.lastUpdated.toDate() > entriesMap.get(data.date).lastUpdated.toDate()))) {
+                        entriesMap.set(data.date, {
+                            id: doc.id,
+                            date: data.date,
+                            drinks: data.drinks || [],
+                            lastUpdated: data.lastUpdated
+                        });
+                    }
                 });
                 
-                logDebug(`Fetched ${drinkEntries.length} entries directly`);
+                // Convert map back to array and sort by date
+                drinkEntries = Array.from(entriesMap.values())
+                    .sort((a, b) => new Date(a.date) - new Date(b.date));
+                
+                logDebug(`Fetched ${drinkEntries.length} entries directly (with timestamp sorting)`);
             }),
             
         // Fetch achievements directly
@@ -1140,11 +1186,11 @@ function refreshUserData() {
         checkAchievements();
         renderAchievements();
         
-        // Now set up listeners for future updates
-        return loadUserData();
+        // Now set up listeners for future updates with new timestamp ordering
+        return setupRealTimeListeners();
     })
     .then(() => {
-        logDebug('Manual refresh completed');
+        logDebug('Manual refresh completed with server timestamp ordering');
         // Reset button
         refreshDataBtn.textContent = 'Refresh Data';
         refreshDataBtn.disabled = false;
@@ -1162,4 +1208,128 @@ function refreshUserData() {
         showAlert(document.querySelector('.stats-section'), 'Failed to refresh data: ' + error.message, 'error');
         return Promise.reject(error);
     });
+}
+
+// Set up real-time listeners with timestamp ordering
+async function setupRealTimeListeners() {
+    if (!currentUser) {
+        logDebug('No current user, cannot set up listeners');
+        return;
+    }
+    
+    try {
+        logDebug('Setting up real-time listeners with timestamp ordering', { uid: currentUser.uid });
+        
+        // Unsubscribe from previous listeners if they exist
+        if (window.entriesUnsubscribe) {
+            logDebug('Unsubscribing from previous entries listener');
+            window.entriesUnsubscribe();
+            window.entriesUnsubscribe = null;
+        }
+        
+        if (window.achievementsUnsubscribe) {
+            logDebug('Unsubscribing from previous achievements listener');
+            window.achievementsUnsubscribe();
+            window.achievementsUnsubscribe = null;
+        }
+        
+        // Set up real-time listener for user drink entries with timestamp ordering
+        try {
+            const entriesRef = db.collection('users').doc(currentUser.uid)
+                .collection('drinkEntries')
+                .orderBy('lastUpdated', 'desc'); // Order by most recent updates
+                
+            logDebug('Creating entries listener with timestamp ordering', { path: `users/${currentUser.uid}/drinkEntries` });
+            
+            window.entriesUnsubscribe = entriesRef.onSnapshot(
+                snapshot => {
+                    logDebug(`Received ${snapshot.docs.length} entries from Firestore (real-time with timestamp ordering)`);
+                    
+                    // Process the entries with timestamps
+                    const entriesMap = new Map(); // Use a map to deduplicate
+                    
+                    snapshot.docs.forEach(doc => {
+                        const data = doc.data();
+                        // Only add if this date isn't already in our map or if this update is newer
+                        if (!entriesMap.has(data.date) || 
+                            (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
+                            data.lastUpdated.toDate() > entriesMap.get(data.date).lastUpdated.toDate()))) {
+                            entriesMap.set(data.date, {
+                                id: doc.id,
+                                date: data.date,
+                                drinks: data.drinks || [],
+                                lastUpdated: data.lastUpdated
+                            });
+                        }
+                    });
+                    
+                    // Convert map back to array and sort by date
+                    drinkEntries = Array.from(entriesMap.values())
+                        .sort((a, b) => new Date(a.date) - new Date(b.date));
+                    
+                    // Log the entries for debugging
+                    logDebug('Entries received with timestamp ordering', { 
+                        count: drinkEntries.length, 
+                        sample: drinkEntries.length > 0 ? drinkEntries[0] : null 
+                    });
+                    
+                    // Update UI with new data
+                    renderCalendar();
+                    updateStats();
+                    checkAchievements();
+                }, 
+                error => {
+                    logDebug('Error in entries listener', error);
+                    console.error('Error in entries listener:', error);
+                    
+                    // Try to re-establish connection after a delay
+                    setTimeout(() => {
+                        logDebug('Attempting to reconnect entries listener');
+                        if (window.entriesUnsubscribe) {
+                            window.entriesUnsubscribe();
+                            window.entriesUnsubscribe = null;
+                        }
+                        setupRealTimeListeners();
+                    }, 5000);
+                }
+            );
+            
+            logDebug('Entries listener with timestamp ordering established successfully');
+        } catch (entriesError) {
+            logDebug('Failed to set up entries listener', entriesError);
+        }
+        
+        // Set up real-time listener for user achievements
+        try {
+            const achievementsRef = db.collection('users').doc(currentUser.uid)
+                .collection('userData')
+                .doc('achievements');
+                
+            logDebug('Creating achievements listener', { path: `users/${currentUser.uid}/userData/achievements` });
+            
+            window.achievementsUnsubscribe = achievementsRef.onSnapshot(
+                doc => {
+                    logDebug('Achievements document updated', { exists: doc.exists });
+                    if (doc.exists) {
+                        achievements = doc.data().list || [];
+                    } else {
+                        achievements = [];
+                    }
+                    
+                    renderAchievements();
+                }, 
+                error => {
+                    logDebug('Error in achievements listener', error);
+                    console.error('Error in achievements listener:', error);
+                }
+            );
+            
+            logDebug('Achievements listener established successfully');
+        } catch (achievementsError) {
+            logDebug('Failed to set up achievements listener', achievementsError);
+        }
+    } catch (error) {
+        logDebug('Error setting up real-time listeners with timestamp ordering', error);
+        console.error('Error setting up real-time listeners:', error);
+    }
 } 
