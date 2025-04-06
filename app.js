@@ -515,7 +515,7 @@ async function loadUserData() {
         try {
             const entriesRef = db.collection('users').doc(currentUser.uid)
                 .collection('drinkEntries')
-                .orderBy('date');
+                .orderBy('lastUpdated', 'desc'); // Change from date to lastUpdated and sort by newest first
                 
             logDebug('Creating entries listener', { path: `users/${currentUser.uid}/drinkEntries` });
             
@@ -523,14 +523,27 @@ async function loadUserData() {
                 snapshot => {
                     logDebug(`Received ${snapshot.docs.length} entries from Firestore (real-time)`);
                     
-                    drinkEntries = snapshot.docs.map(doc => {
+                    // Process entries with timestamp handling
+                    const entriesMap = new Map(); // Use map to deduplicate entries by date
+                    
+                    snapshot.docs.forEach(doc => {
                         const data = doc.data();
-                        return {
-                            id: doc.id,
-                            date: data.date,
-                            drinks: data.drinks || [] // Ensure drinks array exists
-                        };
+                        // Only add if this date isn't already in our map or if this update is newer
+                        if (!entriesMap.has(data.date) || 
+                            (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
+                            getTimestampMillis(data.lastUpdated) > getTimestampMillis(entriesMap.get(data.date).lastUpdated)))) {
+                            entriesMap.set(data.date, {
+                                id: doc.id,
+                                date: data.date,
+                                drinks: data.drinks || [], // Ensure drinks array exists
+                                lastUpdated: data.lastUpdated
+                            });
+                        }
                     });
+                    
+                    // Convert map to array and sort by date
+                    drinkEntries = Array.from(entriesMap.values())
+                        .sort((a, b) => new Date(a.date) - new Date(b.date));
                     
                     // Log the entries for debugging
                     logDebug('Entries received', { 
@@ -609,41 +622,38 @@ async function addDrinkEntry() {
     try {
         logDebug('Adding drink entry', { date, drinkType, standardDrinks });
         
-        // Generate a client-side timestamp for the drink item (numeric timestamp for reliable sorting)
-        const timestamp = Date.now();
-        
         // Check if there's already an entry for this date
         const existingEntryIndex = drinkEntries.findIndex(entry => entry.date === date);
         
         if (existingEntryIndex !== -1) {
             // Update existing entry
             const existingEntry = drinkEntries[existingEntryIndex];
+            
+            // Create a simple drinks array with just type and amount - no timestamp objects
             const updatedDrinks = [...existingEntry.drinks, {
                 type: drinkType,
-                amount: standardDrinks,
-                timestamp: timestamp // Use numeric timestamp instead
+                amount: standardDrinks
             }];
             
-            // Update in Firestore using regular Date object instead of server timestamp
+            // Update in Firestore with only simple properties
             await db.collection('users').doc(currentUser.uid)
                 .collection('drinkEntries').doc(existingEntry.id)
                 .update({
                     drinks: updatedDrinks,
-                    lastUpdated: new Date() // Use regular Date object 
+                    lastUpdated: new Date()
                 });
             
             logDebug('Updated existing entry', { id: existingEntry.id, totalDrinks: updatedDrinks.length });
         } else {
-            // Create new entry
+            // Create new entry with simple properties only
             const newEntry = {
                 date,
                 drinks: [{
                     type: drinkType,
-                    amount: standardDrinks,
-                    timestamp: timestamp // Use numeric timestamp instead
+                    amount: standardDrinks
                 }],
-                createdAt: new Date(), // Use regular Date object
-                lastUpdated: new Date() // Use regular Date object
+                createdAt: new Date(),
+                lastUpdated: new Date()
             };
             
             // Add to Firestore
