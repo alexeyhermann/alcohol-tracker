@@ -257,6 +257,34 @@ refreshDataBtn.addEventListener('click', function() {
     refreshUserData();
 });
 
+// Helper function to safely get milliseconds from Firestore timestamp or Date object
+function getTimestampMillis(timestamp) {
+    if (!timestamp) return 0;
+    
+    // Handle Firestore timestamp
+    if (timestamp.seconds !== undefined) {
+        return timestamp.seconds * 1000 + (timestamp.nanoseconds || 0) / 1000000;
+    }
+    
+    // Handle regular Date object
+    if (timestamp instanceof Date) {
+        return timestamp.getTime();
+    }
+    
+    // Handle string date or ISO string
+    if (typeof timestamp === 'string') {
+        return new Date(timestamp).getTime();
+    }
+    
+    // Handle numeric timestamp
+    if (typeof timestamp === 'number') {
+        return timestamp;
+    }
+    
+    // Default fallback
+    return 0;
+}
+
 // Authentication functions
 function initializeApp() {
     // Check if user is logged in
@@ -284,7 +312,7 @@ function initializeApp() {
                     // Only add if this date isn't already in our map or if this update is newer
                     if (!entriesMap.has(data.date) || 
                         (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
-                        data.lastUpdated.toDate() > entriesMap.get(data.date).lastUpdated.toDate()))) {
+                        getTimestampMillis(data.lastUpdated) > getTimestampMillis(entriesMap.get(data.date).lastUpdated)))) {
                         entriesMap.set(data.date, {
                             id: doc.id,
                             date: data.date,
@@ -581,8 +609,8 @@ async function addDrinkEntry() {
     try {
         logDebug('Adding drink entry', { date, drinkType, standardDrinks });
         
-        // Generate a client-side timestamp for the drink item
-        const clientTimestamp = new Date().toISOString();
+        // Generate a client-side timestamp for the drink item (numeric timestamp for reliable sorting)
+        const timestamp = Date.now();
         
         // Check if there's already an entry for this date
         const existingEntryIndex = drinkEntries.findIndex(entry => entry.date === date);
@@ -593,15 +621,15 @@ async function addDrinkEntry() {
             const updatedDrinks = [...existingEntry.drinks, {
                 type: drinkType,
                 amount: standardDrinks,
-                addedAt: clientTimestamp // Use client timestamp instead of server timestamp
+                timestamp: timestamp // Use numeric timestamp instead
             }];
             
-            // Update in Firestore
+            // Update in Firestore using regular Date object instead of server timestamp
             await db.collection('users').doc(currentUser.uid)
                 .collection('drinkEntries').doc(existingEntry.id)
                 .update({
                     drinks: updatedDrinks,
-                    lastUpdated: firebase.firestore.FieldValue.serverTimestamp() // Server timestamp is OK here
+                    lastUpdated: new Date() // Use regular Date object 
                 });
             
             logDebug('Updated existing entry', { id: existingEntry.id, totalDrinks: updatedDrinks.length });
@@ -612,10 +640,10 @@ async function addDrinkEntry() {
                 drinks: [{
                     type: drinkType,
                     amount: standardDrinks,
-                    addedAt: clientTimestamp // Use client timestamp instead of server timestamp
+                    timestamp: timestamp // Use numeric timestamp instead
                 }],
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(), // Server timestamp is OK here
-                lastUpdated: firebase.firestore.FieldValue.serverTimestamp() // Server timestamp is OK here
+                createdAt: new Date(), // Use regular Date object
+                lastUpdated: new Date() // Use regular Date object
             };
             
             // Add to Firestore
@@ -661,7 +689,7 @@ async function checkAchievements() {
                 .collection('userData').doc('achievements')
                 .set({
                     list: achievements,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    updatedAt: new Date() // Use regular Date object instead of server timestamp
                 });
             
             renderAchievements();
@@ -1150,7 +1178,7 @@ function refreshUserData() {
                     // Only add if this date isn't already in our map or if this update is newer
                     if (!entriesMap.has(data.date) || 
                         (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
-                        data.lastUpdated.toDate() > entriesMap.get(data.date).lastUpdated.toDate()))) {
+                        getTimestampMillis(data.lastUpdated) > getTimestampMillis(entriesMap.get(data.date).lastUpdated)))) {
                         entriesMap.set(data.date, {
                             id: doc.id,
                             date: data.date,
@@ -1256,7 +1284,7 @@ async function setupRealTimeListeners() {
                         // Only add if this date isn't already in our map or if this update is newer
                         if (!entriesMap.has(data.date) || 
                             (data.lastUpdated && (!entriesMap.get(data.date).lastUpdated || 
-                            data.lastUpdated.toDate() > entriesMap.get(data.date).lastUpdated.toDate()))) {
+                            getTimestampMillis(data.lastUpdated) > getTimestampMillis(entriesMap.get(data.date).lastUpdated)))) {
                             entriesMap.set(data.date, {
                                 id: doc.id,
                                 date: data.date,
